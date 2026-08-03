@@ -15,7 +15,7 @@ import streamlit as st
 
 from model import (
     predict, compute_composite_score, evaluate_against_target,
-    recommend_best_recipe, build_stage_diff_table, generate_dashboard_analysis,
+    recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
 )
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
@@ -63,6 +63,7 @@ def init_session_state():
         "prediction_targets": None,
         "prediction_evaluation": None,
         "prediction_recommendation": None,
+        "prediction_param_suggestions": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -432,6 +433,46 @@ def show_comparison(current_result: dict, current_score: dict, recommendation: d
 
 
 # ==============================================================================
+# Output E. 파라미터별 조정 제안 (AI 추천 — Recipe 단위가 아니라 파라미터 단위)
+# ==============================================================================
+def show_parameter_recommendations(suggestion: dict):
+    st.markdown("<div class='section-title'>파라미터별 조정 제안 (AI 추천)</div>", unsafe_allow_html=True)
+    st.caption(
+        "기존 Recipe 중에서 고르는 게 아니라, 지금 입력한 조건을 그대로 출발점 삼아 "
+        "파라미터를 하나씩 바꿔보면서 품질이 좋아지는 방향을 찾은 결과입니다. "
+        "실제로 관측된 값 범위 안에서만 탐색하므로, 한 번도 시도되지 않은 값은 제안하지 않습니다."
+    )
+
+    if suggestion is None:
+        return
+    if suggestion.get("error"):
+        st.error(f"추천을 계산할 수 없습니다: {suggestion['error']}")
+        return
+
+    recs = suggestion.get("recommendations") or []
+    if not recs:
+        st.info("현재 조건에서 더 좋아질 수 있는 파라미터 조정을 찾지 못했습니다 (이미 관측 범위 안에서는 최선에 가깝습니다).")
+        return
+
+    direction_kr = {"increase": "▲ 증가", "decrease": "▼ 감소"}
+    rows = []
+    for r in recs:
+        rows.append({
+            "Parameter": r["parameter"],
+            "방향": direction_kr.get(r["direction"], r["direction"]),
+            "현재값 → 제안값": f"{r['current']:g} → {r['proposed']:g}",
+            "예상 품질 변화": f"{r['predicted_quality_gain_pct_point']:+.2f}점",
+            "Worst Zone 변화": f"{r['worst_zone_quality_gain_pct_point']:+.2f}점",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption(
+        f"현재 조건 기준 품질지수 {suggestion['baseline_quality_index_pct']:.1f}점에서 출발한 결과이며, "
+        "One-Factor-at-a-Time(한 번에 파라미터 하나씩) 방식으로 탐색한 것입니다. "
+        "인과관계를 증명한 것은 아니며, 실제 적용 전 검증이 필요합니다."
+    )
+
+
+# ==============================================================================
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
 def create_process_dashboard_selectors(workbook: dict, process: str):
@@ -616,16 +657,19 @@ def main():
             result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process)
             evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
             recommendation = None
+            param_suggestions = None
             if not result.get("_error"):
                 recommendation = recommend_best_recipe(
                     inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
                 )
+                param_suggestions = recommend_parameter_adjustments(inputs, process=process)
 
             st.session_state.prediction_result = result
             st.session_state.prediction_inputs = inputs
             st.session_state.prediction_targets = targets
             st.session_state.prediction_evaluation = evaluation
             st.session_state.prediction_recommendation = recommendation
+            st.session_state.prediction_param_suggestions = param_suggestions
 
         if st.session_state.prediction_result is not None:
             st.markdown("---")
@@ -644,6 +688,8 @@ def main():
                     st.session_state.prediction_evaluation["score"],
                     st.session_state.prediction_recommendation,
                 )
+                st.markdown("---")
+                show_parameter_recommendations(st.session_state.prediction_param_suggestions)
         else:
             st.info("공정 조건과 목표 품질을 입력하고 '예측 · 평가 · 추천 실행' 버튼을 눌러주세요.")
 

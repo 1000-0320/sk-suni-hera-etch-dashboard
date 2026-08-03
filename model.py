@@ -281,6 +281,21 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
     return messages
 
 
+def recommend_parameter_adjustments(inputs: dict, process: str = "trench", top_n: int = 5) -> dict:
+    """현재 화면에 입력된 (기존 Recipe가 아닌) Custom 값을 출발점으로,
+    파라미터를 하나씩 바꿔가며(One-Factor-at-a-Time) 관측된 값들 중 품질이 가장 좋아지는
+    방향을 찾는다. Recipe 단위 추천(recommend_best_recipe)과 달리 파라미터 단위 제안이다."""
+    core = _CORES[process]
+    model_dir = _MODEL_DIRS[process]
+    equipment = inputs.get("equipment")
+    chamber = inputs.get("chamber")
+    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
+    try:
+        return core.recommend_parameter_changes(recipe, equipment, chamber, model_dir=model_dir, top_n=top_n)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
 def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recipe_master_df, stage_defs=None) -> list:
     """현재 입력 조건 대비 추천 Recipe의 Stage별 파라미터 변경점만 표로 정리"""
     from data_utils import STAGE_DEFS as _DEFAULT_STAGE_DEFS
