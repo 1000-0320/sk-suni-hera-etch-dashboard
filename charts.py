@@ -1,0 +1,348 @@
+"""
+Etch AI Decision Support System - Plotly 차트 빌더 모듈
+모든 함수는 완성된 plotly Figure를 반환한다 (st.plotly_chart로 렌더링).
+
+단위 참고: 실제 데이터셋 기준 CD/Depth는 nm, Uniformity 계열은 변동계수(CV%, 낮을수록 좋음).
+"""
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
+from style import COLORS
+from data_utils import PARTICLE_DEFECT_THRESHOLD
+
+_FONT = dict(family="Pretendard, -apple-system, Segoe UI, sans-serif", color=COLORS["text_primary"])
+
+
+def _status_colors_for_values(values, warn_th=90, good_th=95):
+    """값이 높을수록 좋은 지표(Pass Rate 등)를 good/warning/critical 색상으로 변환"""
+    colors = []
+    for v in values:
+        if v >= good_th:
+            colors.append(COLORS["good"])
+        elif v >= warn_th:
+            colors.append(COLORS["warning"])
+        else:
+            colors.append(COLORS["critical"])
+    return colors
+
+
+# ----------------------------------------------------------------------------
+# 1. 공정 예측 탭 차트
+# ----------------------------------------------------------------------------
+def build_cd_bar_chart(result: dict):
+    """Top / Mid / Bottom CD 막대그래프"""
+    categories = ["Top CD", "Mid CD", "Bottom CD"]
+    values = [result[c] for c in categories]
+    colors = [COLORS["series1"], COLORS["series2"], COLORS["series3"]]
+
+    fig = go.Figure(go.Bar(
+        x=categories, y=values, marker_color=colors,
+        text=[f"{v:.1f}" for v in values], textposition="outside",
+    ))
+    fig.update_layout(
+        title="CD 분포 (Top / Mid / Bottom)", yaxis_title="CD (nm)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=30), showlegend=False, height=320,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"], zeroline=False)
+    fig.update_xaxes(showgrid=False)
+    return fig
+
+
+def build_gauge_chart(title: str, value: float, warn_th: float = 90, good_th: float = 95):
+    """값이 높을수록 좋은 지표용 게이지 (예: Overall Pass Rate)"""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", value=value,
+        number={"suffix": "%", "font": {"size": 34}},
+        title={"text": title, "font": {"size": 15}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": COLORS["muted"]},
+            "bar": {"color": COLORS["accent"]},
+            "bgcolor": COLORS["surface"],
+            "steps": [
+                {"range": [0, warn_th], "color": "rgba(208,59,59,0.15)"},
+                {"range": [warn_th, good_th], "color": "rgba(250,178,25,0.18)"},
+                {"range": [good_th, 100], "color": "rgba(12,163,12,0.15)"},
+            ],
+            "threshold": {"line": {"color": COLORS["critical"], "width": 3}, "thickness": 0.8, "value": good_th},
+        },
+    ))
+    fig.update_layout(paper_bgcolor=COLORS["surface"], font=_FONT, margin=dict(t=40, b=10, l=25, r=25), height=280)
+    return fig
+
+
+def build_variation_gauge(title: str, value: float, good_th: float, warn_th: float, max_range: float):
+    """값이 낮을수록 좋은 지표용 게이지 (CD/Depth Uniformity·CV%)"""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", value=value,
+        number={"suffix": "%", "font": {"size": 34}},
+        title={"text": title, "font": {"size": 15}},
+        gauge={
+            "axis": {"range": [0, max_range], "tickcolor": COLORS["muted"]},
+            "bar": {"color": COLORS["accent"]},
+            "bgcolor": COLORS["surface"],
+            "steps": [
+                {"range": [0, good_th], "color": "rgba(12,163,12,0.15)"},
+                {"range": [good_th, warn_th], "color": "rgba(250,178,25,0.18)"},
+                {"range": [warn_th, max_range], "color": "rgba(208,59,59,0.15)"},
+            ],
+            "threshold": {"line": {"color": COLORS["critical"], "width": 3}, "thickness": 0.8, "value": warn_th},
+        },
+    ))
+    fig.update_layout(paper_bgcolor=COLORS["surface"], font=_FONT, margin=dict(t=40, b=10, l=25, r=25), height=280)
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# 2. Process Dashboard - 품질 결과 시각화 (Wafer 단위 추이, Wafer_Summary 원본 사용)
+# ----------------------------------------------------------------------------
+def build_cd_trend_chart(wafer_df):
+    fig = go.Figure()
+    cols = [("Top_CD_Mean_nm", "Top CD"), ("Mid_CD_Mean_nm", "Mid CD"), ("Bottom_CD_Mean_nm", "Bottom CD")]
+    for (col, name), color in zip(cols, [COLORS["series1"], COLORS["series2"], COLORS["series3"]]):
+        fig.add_trace(go.Scatter(
+            x=wafer_df["Wafer_Label"], y=wafer_df[col], mode="lines+markers",
+            name=name, line=dict(color=color, width=2), marker=dict(size=6),
+        ))
+    fig.update_layout(
+        title="Wafer별 Top / Mid / Bottom CD", yaxis_title="CD (nm)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        legend=dict(orientation="h", y=-0.32), margin=dict(t=50, b=60, l=30, r=20), height=340,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    fig.update_xaxes(showgrid=False, tickangle=-45)
+    return fig
+
+
+def build_depth_trend_chart(wafer_df):
+    fig = go.Figure(go.Bar(x=wafer_df["Wafer_Label"], y=wafer_df["Depth_Mean_nm"], marker_color=COLORS["series1"]))
+    fig.update_layout(
+        title="Wafer별 Depth", yaxis_title="Depth (nm)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=60, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    fig.update_xaxes(showgrid=False, tickangle=-45)
+    return fig
+
+
+def build_cd_uniformity_trend_chart(wafer_df):
+    cd_uniformity = wafer_df[["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]].mean(axis=1)
+    fig = go.Figure(go.Scatter(
+        x=wafer_df["Wafer_Label"], y=cd_uniformity, mode="lines+markers",
+        line=dict(color=COLORS["series1"], width=2), marker=dict(size=6),
+    ))
+    fig.update_layout(
+        title="Wafer별 CD Uniformity (CV%, 낮을수록 좋음)", yaxis_title="CD Uniformity (CV%)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=60, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    fig.update_xaxes(showgrid=False, tickangle=-45)
+    return fig
+
+
+def build_depth_uniformity_trend_chart(wafer_df):
+    fig = go.Figure(go.Scatter(
+        x=wafer_df["Wafer_Label"], y=wafer_df["Depth_Uniformity_pct"], mode="lines+markers",
+        line=dict(color=COLORS["series2"], width=2), marker=dict(size=6),
+    ))
+    fig.update_layout(
+        title="Wafer별 Depth Uniformity (CV%, 낮을수록 좋음)", yaxis_title="Depth Uniformity (CV%)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=60, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    fig.update_xaxes(showgrid=False, tickangle=-45)
+    return fig
+
+
+def build_pass_rate_trend_chart(wafer_df):
+    colors = _status_colors_for_values(wafer_df["Overall_Spec_Pass_Rate_pct"])
+    fig = go.Figure(go.Bar(x=wafer_df["Wafer_Label"], y=wafer_df["Overall_Spec_Pass_Rate_pct"], marker_color=colors))
+    fig.add_hline(y=95, line_dash="dash", line_color=COLORS["good"], annotation_text="양호 ≥95%")
+    fig.add_hline(y=90, line_dash="dash", line_color="#c98500", annotation_text="주의 ≥90%")
+    fig.update_layout(
+        title="Wafer별 Overall Pass Rate", yaxis_title="Pass Rate (%)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=60, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 100])
+    fig.update_xaxes(showgrid=False, tickangle=-45)
+    return fig
+
+
+def build_particle_chart(wafer_df):
+    has_defect = wafer_df["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD
+    counts = has_defect.value_counts()
+    labels = ["발생" if v else "미발생" for v in counts.index]
+    colors = [COLORS["critical"] if v else COLORS["good"] for v in counts.index]
+    fig = go.Figure(go.Bar(
+        x=labels, y=counts.values, marker_color=colors,
+        text=counts.values, textposition="outside",
+    ))
+    fig.update_layout(
+        title=f"Particle(Defect &gt;{PARTICLE_DEFECT_THRESHOLD}건) 발생 Wafer 수", yaxis_title="Wafer 수",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# 3. Wafer Map (Site_Level_Raw의 실제 Radius_frac/Angle_deg 좌표 사용)
+# ----------------------------------------------------------------------------
+def build_wafer_map(filtered_site_df, value_col: str, value_label: str):
+    """선택 조건에 해당하는 모든 Wafer의 같은 Site 위치값을 평균해 대표 Wafer Map을 그린다."""
+    agg = (
+        filtered_site_df.groupby(["Site_ID", "Zone", "Radius_frac", "Angle_deg"], dropna=False)[value_col]
+        .mean()
+        .reset_index()
+    )
+
+    xs, ys, vals, zone_labels = [], [], [], []
+    for _, row in agg.iterrows():
+        angle = row["Angle_deg"]
+        theta = 0.0 if pd.isna(angle) else np.radians(angle)
+        radius = row["Radius_frac"]
+        xs.append(radius * np.cos(theta))
+        ys.append(radius * np.sin(theta))
+        vals.append(row[value_col])
+        zone_labels.append(row["Zone"])
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="markers",
+        marker=dict(
+            size=20, color=vals, colorscale="Blues", showscale=True,
+            colorbar=dict(title=value_label, thickness=14),
+            line=dict(width=0.5, color="white"),
+        ),
+        text=[f"{z}<br>{value_label}: {v:.2f}" for z, v in zip(zone_labels, vals)],
+        hoverinfo="text", showlegend=False,
+    ))
+    theta_full = np.linspace(0, 2 * np.pi, 200)
+    fig.add_trace(go.Scatter(
+        x=np.cos(theta_full), y=np.sin(theta_full), mode="lines",
+        line=dict(color=COLORS["muted"], width=1.5), hoverinfo="skip", showlegend=False,
+    ))
+    fig.update_layout(
+        title=f"Wafer Map — {value_label} (선택 조건 평균)",
+        xaxis=dict(visible=False, range=[-1.15, 1.15], scaleanchor="y"),
+        yaxis=dict(visible=False, range=[-1.15, 1.15]),
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=10, l=10, r=10), height=460,
+    )
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# 4. Zone 분석 (Site_Level_Raw 기반 zone_summary)
+# ----------------------------------------------------------------------------
+def build_zone_cd_chart(zone_summary):
+    fig = go.Figure()
+    for col, color in zip(["Top CD", "Mid CD", "Bottom CD"],
+                           [COLORS["series1"], COLORS["series2"], COLORS["series3"]]):
+        fig.add_trace(go.Bar(x=zone_summary["Zone"], y=zone_summary[col], name=col, marker_color=color))
+    fig.update_layout(
+        title="Zone별 Top / Mid / Bottom CD", yaxis_title="CD (nm)", barmode="group",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        legend=dict(orientation="h", y=-0.22), margin=dict(t=50, b=40, l=30, r=20), height=340,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    return fig
+
+
+def build_zone_depth_chart(zone_summary):
+    fig = go.Figure(go.Bar(x=zone_summary["Zone"], y=zone_summary["Depth"], marker_color=COLORS["series1"]))
+    fig.update_layout(
+        title="Zone별 Depth", yaxis_title="Depth (nm)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    return fig
+
+
+def build_zone_spread_chart(zone_summary):
+    """Zone별 Uniformity 대체 지표: 같은 Zone 내 Site간 편차(표준편차, nm)"""
+    fig = go.Figure()
+    for col, color in zip(["CD Spread", "Depth Spread"], [COLORS["series1"], COLORS["series2"]]):
+        fig.add_trace(go.Bar(x=zone_summary["Zone"], y=zone_summary[col], name=col, marker_color=color))
+    fig.update_layout(
+        title="Zone별 Site간 편차 (CD/Depth Spread, 낮을수록 균일)", yaxis_title="표준편차 (nm)", barmode="group",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        legend=dict(orientation="h", y=-0.22), margin=dict(t=50, b=40, l=30, r=20), height=340,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    return fig
+
+
+def build_zone_pass_rate_chart(zone_summary):
+    colors = _status_colors_for_values(zone_summary["Pass Rate"])
+    fig = go.Figure(go.Bar(x=zone_summary["Zone"], y=zone_summary["Pass Rate"], marker_color=colors))
+    fig.update_layout(
+        title="Zone별 Overall Pass Rate", yaxis_title="Pass Rate (%)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 100])
+    return fig
+
+
+def build_zone_defect_chart(zone_summary):
+    fig = go.Figure(go.Bar(
+        x=zone_summary["Zone"], y=zone_summary["Defect Rate"], marker_color=COLORS["critical"],
+    ))
+    fig.update_layout(
+        title="Zone별 Defect(Particle) 발생률", yaxis_title="Defect 발생률 (%)",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# 5. 현재 Recipe vs 추천 Recipe 비교 (Output D)
+# ----------------------------------------------------------------------------
+def build_cd_comparison_chart(current_result: dict, recommended_result: dict):
+    """Top/Mid/Bottom CD를 현재 vs 추천 Recipe로 나란히 비교"""
+    categories = ["Top CD", "Mid CD", "Bottom CD"]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=categories, y=[current_result[c] for c in categories],
+        name="현재 Recipe", marker_color=COLORS["muted"],
+    ))
+    fig.add_trace(go.Bar(
+        x=categories, y=[recommended_result[c] for c in categories],
+        name="추천 Recipe", marker_color=COLORS["accent"],
+    ))
+    fig.update_layout(
+        title="CD 비교 (현재 vs 추천)", yaxis_title="CD (nm)", barmode="group",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        legend=dict(orientation="h", y=-0.2), margin=dict(t=50, b=40, l=30, r=20), height=340,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    return fig
+
+
+def build_score_comparison_chart(current_score: float, recommended_score: float):
+    """종합 품질 점수를 현재 vs 추천 Recipe로 비교"""
+    labels = ["현재 Recipe", "추천 Recipe"]
+    values = [current_score, recommended_score]
+    colors = [COLORS["muted"], COLORS["accent"]]
+    fig = go.Figure(go.Bar(
+        x=labels, y=values, marker_color=colors,
+        text=[f"{v:.1f}점" for v in values], textposition="outside",
+    ))
+    fig.update_layout(
+        title="종합 품질 점수 비교", yaxis_title="점수",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 100])
+    return fig
