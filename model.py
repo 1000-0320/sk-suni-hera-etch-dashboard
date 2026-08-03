@@ -1,142 +1,94 @@
 """
 Etch AI Decision Support System - 예측/평가/추천 모델 모듈
 
-※ 아직 Random Forest / XGBoost 등 머신러닝 모델을 사용하지 않는다.
-   predict()는 업로드된 Wafer_Summary(실측 이력)에서 선택한 Recipe의 평균값을
-   "베이스라인"으로 조회하고, 사용자가 입력한 Stage(S1~S4)별 Time/RF Bias/Pressure가
-   그 Recipe의 실제 값과 얼마나 다른지에 따라 소폭 보정하는 "실이력 기반 더미" 함수다.
+predict()는 이제 실측 이력 기반 더미가 아니라, 학습된 RandomForest/XGBoost 모델
+(ml_engine/isolation_core.py, ml_engine/trench_core.py)을 호출해 실제 예측을 수행한다.
+공정(isolation/trench)에 따라 파라미터 개수·Depth 단위가 다르므로 어댑터에서 흡수한다.
 
-   나중에 실제 모델로 교체할 때는 predict() 내부만 아래처럼 바꾸면 된다.
-
-   import joblib
-   _model = joblib.load("rf_model.pkl")
-
-   def predict(inputs, wafer_summary_df=None, recipe_master_df=None):
-       X = pd.DataFrame([inputs])
-       y = _model.predict(X)[0]
-       return {"Top CD": y[0], ...}
-
-   compute_composite_score() / evaluate_against_target() / recommend_best_recipe()는
-   predict()가 반환하는 dict 형태만 유지되면 모델 교체 후에도 그대로 재사용 가능하다.
+compute_composite_score() / evaluate_against_target() / recommend_best_recipe()는
+predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 (모델 교체와 무관).
 """
 
-from data_utils import PARTICLE_DEFECT_THRESHOLD, STAGE_DEFS, stage_inputs_from_recipe
+from ml_engine import isolation_core, trench_core
+from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
+
+_CORES = {"isolation": isolation_core, "trench": trench_core}
+_MODEL_DIRS = {
+    "isolation": "ml_engine/isolation_models",
+    "trench": "ml_engine/trench_models",
+}
+# 각 공정 엔진이 내부적으로 Depth를 어떤 컬럼명/단위로 예측하는지 (isolation은 학습 데이터 원본이 Angstrom)
+_DEPTH_TARGET = {"isolation": "Depth_A", "trench": "Depth_nm"}
+_DEPTH_TO_NM = {"isolation": 0.1, "trench": 1.0}
 
 
 # ==============================================================================
-# 1. predict() - Recipe 조건 -> 예상 품질 결과
+# 0. 입력 dict(Stage별 UI 값) -> 모델 파라미터 dict 변환
 # ==============================================================================
-def _predict_formula_only(inputs: dict) -> dict:
-    """실측 이력 데이터가 없을 때 쓰는 순수 공식 기반 폴백 (더미 로직)"""
-    rf_bias = inputs.get("s4_rf_bias", 180)
-    pressure = inputs.get("s4_pressure", 30)
-    time = inputs.get("s4_time", 75)
+def _app_key_for_param(param_col: str) -> str:
+    """PARAMETER_COLUMNS의 실제 컬럼명(예: S1_RF_Bias_W)을 화면 입력 dict의 key(s1_rf_bias)로 변환."""
+    stage = param_col.split("_")[0].lower()
+    if param_col.endswith("_Time_s"):
+        return f"{stage}_time"
+    if param_col.endswith("_RF_Bias_W"):
+        return f"{stage}_rf_bias"
+    if param_col.endswith("_Pressure_mT"):
+        return f"{stage}_pressure"
+    return param_col.lower()  # Gas Flow 컬럼은 그대로 소문자 매칭 (예: S1_CHF3_sccm -> s1_chf3_sccm)
 
-    top_cd = 255.0 - (pressure - 30) * 0.02
-    mid_cd = 253.0
-    bottom_cd = 245.0 - (rf_bias - 180) * 0.05
-    depth = 1150.0 + (time - 75) * 2
 
-    cd_uniformity = max(0.5, 2.0)
-    depth_uniformity = max(0.5, 8.0)
-    pass_rate = min(100.0, max(0.0, 80.0 - abs(rf_bias - 180) * 0.1))
+def _recipe_from_inputs(inputs: dict, param_columns: list) -> dict:
+    return {col: float(inputs.get(_app_key_for_param(col), 0.0)) for col in param_columns}
+
+
+# ==============================================================================
+# 1. predict() - Recipe 조건 -> 예상 품질 결과 (실제 ML 모델 호출)
+# ==============================================================================
+def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process: str = "trench") -> dict:
+    """
+    Stage별 Time/RF Bias/Pressure/Gas Flow가 담긴 inputs dict를 실제 학습된 모델에 넣어
+    Recipe 예상 품질을 반환한다. Equipment/Chamber는 학습 데이터에서 실제 관측된 조합만 허용된다.
+    """
+    core = _CORES[process]
+    model_dir = _MODEL_DIRS[process]
+    equipment = inputs.get("equipment")
+    chamber = inputs.get("chamber")
+
+    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
+
+    try:
+        raw = core.predict_wafer(recipe, equipment, chamber, model_dir=model_dir)
+    except ValueError as exc:
+        # 학습 데이터에 없는 Equipment/Chamber 조합 등 - 화면에 그대로 노출할 수 있도록 반환
+        return {
+            "Top CD": None, "Mid CD": None, "Bottom CD": None, "Depth": None,
+            "CD Uniformity": None, "Depth Uniformity": None, "Overall Spec Pass Rate": None,
+            "Particle": False, "Defect Count": None, "Particle Probability": None,
+            "_source_wafer_count": 0, "_error": str(exc),
+        }
+
+    wm = raw["wafer_metrics"]
+    depth_target = _DEPTH_TARGET[process]
+    depth_factor = _DEPTH_TO_NM[process]
+    cd_uniformity = (
+        wm["Top_CD_nm"]["uniformity_pct"] + wm["Mid_CD_nm"]["uniformity_pct"] + wm["Bottom_CD_nm"]["uniformity_pct"]
+    ) / 3.0
 
     return {
-        "Top CD": round(top_cd, 1), "Mid CD": round(mid_cd, 1), "Bottom CD": round(bottom_cd, 1),
-        "Depth": round(depth, 1),
-        "CD Uniformity": round(cd_uniformity, 2), "Depth Uniformity": round(depth_uniformity, 2),
-        "Overall Spec Pass Rate": round(pass_rate, 1),
-        "Particle": False, "Defect Count": 0.0, "Particle Probability": 0.0,
-        "_source_wafer_count": 0,
-    }
-
-
-# Stage별 조건이 어떤 출력 지표에 주로 영향을 주는지에 대한 단순화된 가정(더미).
-# 실제 공정 물리를 정밀 모델링한 것이 아니라, ML 도입 전까지 쓰는 근사 민감도다.
-#   S1(SiON Strip)  -> Top CD 형성에 주로 영향
-#   S2(SOC Open)    -> Mid CD 형성에 주로 영향
-#   S3(SiO2 HM)     -> Top/Mid CD 경계(테이퍼)에 영향
-#   S4(Si Main)     -> Bottom CD / Depth에 주로 영향 (가장 큰 영향)
-def _stage_delta(inputs: dict, recipe_row, stage_key: str, field: str, ref_col: str) -> float:
-    input_key = f"{stage_key.lower()}_{field}"
-    if input_key not in inputs or recipe_row is None:
-        return 0.0
-    return float(inputs[input_key]) - float(recipe_row[ref_col])
-
-
-def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None) -> dict:
-    """
-    공정 조건(dict, Stage별 Time/RF Bias/Pressure 포함) + 실측 이력(Wafer_Summary)을 이용한 예측 함수.
-
-    1) 선택한 Recipe(+Equipment/Chamber)의 과거 Wafer_Summary 평균을 베이스라인으로 조회
-    2) 사용자가 입력한 Stage별 조건이 그 Recipe의 실제 값과 얼마나 다른지에 비례해
-       베이스라인을 소폭 보정 (What-if 튜닝 효과)
-    """
-    recipe = inputs.get("recipe")
-
-    if wafer_summary_df is None or wafer_summary_df.empty or not recipe:
-        return _predict_formula_only(inputs)
-
-    subset = wafer_summary_df[wafer_summary_df["Recipe_Version"] == recipe]
-    narrowed = subset[
-        (subset["Equipment_Model"] == inputs.get("equipment"))
-        & (subset["Chamber_ID"] == inputs.get("chamber"))
-    ]
-    if len(narrowed) >= 3:
-        subset = narrowed
-
-    if subset.empty:
-        return _predict_formula_only(inputs)
-
-    baseline_top = subset["Top_CD_Mean_nm"].mean()
-    baseline_mid = subset["Mid_CD_Mean_nm"].mean()
-    baseline_bottom = subset["Bottom_CD_Mean_nm"].mean()
-    baseline_depth = subset["Depth_Mean_nm"].mean()
-    baseline_cd_uniformity = subset[
-        ["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]
-    ].mean().mean()
-    baseline_depth_uniformity = subset["Depth_Uniformity_pct"].mean()
-    baseline_pass_rate = subset["Overall_Spec_Pass_Rate_pct"].mean()
-    baseline_defect_count = subset["Total_Defect_Count"].mean()
-    particle_ratio = (subset["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).mean()
-
-    recipe_row = None
-    if recipe_master_df is not None and not recipe_master_df.empty:
-        match = recipe_master_df[recipe_master_df["Recipe_Version"] == recipe]
-        if not match.empty:
-            recipe_row = match.iloc[0]
-
-    d_s1_bias = _stage_delta(inputs, recipe_row, "S1", "rf_bias", "S1_RF_Bias_W")
-    d_s1_pressure = _stage_delta(inputs, recipe_row, "S1", "pressure", "S1_Pressure_mT")
-    d_s2_pressure = _stage_delta(inputs, recipe_row, "S2", "pressure", "S2_Pressure_mT")
-    d_s3_bias = _stage_delta(inputs, recipe_row, "S3", "rf_bias", "S3_RF_Bias_W")
-    d_s4_bias = _stage_delta(inputs, recipe_row, "S4", "rf_bias", "S4_RF_Bias_W")
-    d_s4_pressure = _stage_delta(inputs, recipe_row, "S4", "pressure", "S4_Pressure_mT")
-    d_s4_time = _stage_delta(inputs, recipe_row, "S4", "time", "S4_Time_s")
-
-    top_cd = baseline_top - d_s1_pressure * 0.05 + d_s1_bias * 0.01
-    mid_cd = baseline_mid - d_s2_pressure * 0.04 - d_s3_bias * 0.01
-    bottom_cd = baseline_bottom - d_s4_bias * 0.08
-    depth = baseline_depth + d_s4_time * 1.5 - d_s4_pressure * 0.8
-
-    total_abs_delta = abs(d_s1_bias) + abs(d_s1_pressure) + abs(d_s2_pressure) + abs(d_s3_bias) + abs(d_s4_bias)
-    cd_uniformity = max(0.3, baseline_cd_uniformity + total_abs_delta * 0.003)
-    depth_uniformity = max(0.3, baseline_depth_uniformity + abs(d_s4_time) * 0.02 + abs(d_s4_pressure) * 0.03)
-    pass_rate = min(100.0, max(0.0, baseline_pass_rate - abs(d_s4_bias) * 0.02 - abs(d_s4_pressure) * 0.05))
-    particle = particle_ratio >= 0.5
-
-    return {
-        "Top CD": round(float(top_cd), 1),
-        "Mid CD": round(float(mid_cd), 1),
-        "Bottom CD": round(float(bottom_cd), 1),
-        "Depth": round(float(depth), 1),
+        "Top CD": round(float(wm["Top_CD_nm"]["mean"]), 1),
+        "Mid CD": round(float(wm["Mid_CD_nm"]["mean"]), 1),
+        "Bottom CD": round(float(wm["Bottom_CD_nm"]["mean"]), 1),
+        "Depth": round(float(wm[depth_target]["mean"]) * depth_factor, 1),
         "CD Uniformity": round(float(cd_uniformity), 2),
-        "Depth Uniformity": round(float(depth_uniformity), 2),
-        "Overall Spec Pass Rate": round(float(pass_rate), 1),
-        "Particle": bool(particle),
-        "Defect Count": round(float(baseline_defect_count), 1),
-        "Particle Probability": round(float(particle_ratio * 100), 1),
-        "_source_wafer_count": int(len(subset)),
+        "Depth Uniformity": round(float(wm[depth_target]["uniformity_pct"]), 2),
+        "Overall Spec Pass Rate": round(float(raw["predicted_overall_spec_pass_rate_pct"]), 1),
+        "Particle": bool(raw["predicted_any_particle_probability_pct_independence_approx"] >= 50),
+        "Defect Count": round(float(raw["predicted_total_defect_count"]), 1),
+        "Particle Probability": round(float(raw["predicted_any_particle_probability_pct_independence_approx"]), 1),
+        "_source_wafer_count": 25,
+        "_quality_index_v3_pct": round(float(raw["predicted_quality_index_pct"]), 1),
+        "_worst_zone": raw["worst_zone"],
+        "_warnings": raw["warnings"],
     }
 
 
@@ -253,20 +205,23 @@ def generate_priority_issues(result: dict, targets: dict, errors: dict, satisfie
 # 4. 최적 Recipe 추천 (Output C) + 비교 (Output D)
 # ==============================================================================
 def recommend_best_recipe(current_recipe: str, inputs: dict, targets: dict,
-                           wafer_summary_df, recipe_master_df) -> dict:
-    """현재 조건(Equipment/Chamber)에서 알려진 Recipe들을 각각 '그 Recipe 그대로' 평가해
-    종합 품질 점수가 가장 높은 Recipe를 추천한다 (아직 ML 최적화가 아닌, 기존 Recipe 중 탐색)."""
+                           wafer_summary_df, recipe_master_df, process: str = "trench") -> dict:
+    """현재 조건(Equipment/Chamber)에서 알려진 Recipe들을 각각 '그 Recipe 그대로' 실제 모델로 평가해
+    종합 품질 점수가 가장 높은 Recipe를 추천한다."""
     if recipe_master_df is None or recipe_master_df.empty:
         return None
 
+    stage_defs = PROCESS_STAGE_DEFS[process]
     candidates = []
     for recipe in recipe_master_df["Recipe_Version"]:
         if recipe == current_recipe:
             continue
         cand_inputs = {"equipment": inputs.get("equipment"), "chamber": inputs.get("chamber"), "recipe": recipe}
-        cand_inputs.update(stage_inputs_from_recipe(recipe_master_df, recipe))  # 보정 없이 그 Recipe 고유값으로 평가
+        cand_inputs.update(stage_inputs_from_recipe(recipe_master_df, recipe, stage_defs))
 
-        result = predict(cand_inputs, wafer_summary_df, recipe_master_df)
+        result = predict(cand_inputs, wafer_summary_df, recipe_master_df, process=process)
+        if result.get("_error"):
+            continue
         score = compute_composite_score(result, targets)
         candidates.append({"recipe": recipe, "inputs": cand_inputs, "result": result, "score": score})
 
@@ -326,10 +281,12 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
     return messages
 
 
-def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recipe_master_df) -> list:
+def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recipe_master_df, stage_defs=None) -> list:
     """현재 입력 조건 대비 추천 Recipe의 Stage별 파라미터 변경점만 표로 정리"""
+    from data_utils import STAGE_DEFS as _DEFAULT_STAGE_DEFS
+    stage_defs = stage_defs or _DEFAULT_STAGE_DEFS
     rows = []
-    for stage in STAGE_DEFS:
+    for stage in stage_defs:
         key = stage["key"].lower()
         for field, unit in [("time", "s"), ("rf_bias", "W"), ("pressure", "mT")]:
             cur = current_inputs.get(f"{key}_{field}")

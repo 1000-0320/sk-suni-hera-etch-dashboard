@@ -2,12 +2,10 @@
 Etch AI Decision Support System
 반도체 Etch 공정 품질 예측 및 의사결정 지원 시스템
 
-※ 아직 머신러닝(Random Forest / XGBoost) 미구현 단계.
-   predict()는 업로드된 실측 이력(Wafer_Summary)에서 선택한 Recipe의 평균값을
-   조회하는 "실데이터 기반 더미" 함수이며, 나중에 model.predict() 내부만
-   교체하면 실제 학습 모델과 쉽게 연결할 수 있는 구조로 작성했다.
+isolation / trench 두 공정을 선택할 수 있고, 학습된 RandomForest/XGBoost 모델로
+실제 예측을 수행한다 (model.predict() 내부가 ml_engine의 학습된 모델을 호출).
 
-   업로드 워크북은 3개 시트 구조를 전제로 한다: Recipe_Master / Wafer_Summary / Site_Level_Raw
+업로드 워크북은 3개 시트 구조를 전제로 한다: Recipe_Master / Wafer_Summary / Site_Level_Raw
 
 실행: streamlit run app.py
 """
@@ -20,9 +18,10 @@ from model import (
     recommend_best_recipe, build_stage_diff_table, generate_dashboard_analysis,
 )
 from data_utils import (
-    generate_dummy_workbook, is_valid_workbook, load_required_sheets,
+    generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
     get_zone_summary, get_recipe_stage_table, stage_inputs_from_recipe,
-    ordered_recipe_versions, get_default_targets, STAGE_DEFS, REQUIRED_SHEETS, PARTICLE_DEFECT_THRESHOLD,
+    ordered_recipe_versions, get_default_targets, PROCESS_STAGE_DEFS, PROCESS_LABELS,
+    REQUIRED_SHEETS, PARTICLE_DEFECT_THRESHOLD,
 )
 from style import (
     inject_custom_css, render_metric_card, render_summary_card, render_status_badge,
@@ -43,7 +42,7 @@ from charts import (
 st.set_page_config(page_title="Etch AI Decision Support System", page_icon="🧪", layout="wide")
 inject_custom_css()
 
-# Wafer Map 지표 선택지 (표시용 라벨 -> Site_Level_Raw 실제 컬럼명)
+# Wafer Map에서 한 번에 보여줄 지표들 (표시용 라벨 -> Site_Level_Raw 실제 컬럼명)
 WAFER_MAP_METRICS = {
     "Top CD": "Top_CD_nm", "Mid CD": "Mid_CD_nm", "Bottom CD": "Bottom_CD_nm", "Depth": "Depth_nm",
 }
@@ -54,9 +53,11 @@ WAFER_MAP_METRICS = {
 # ==============================================================================
 def init_session_state():
     defaults = {
+        "process": "trench",
         "uploaded_filename": None,
         "sheet_names": [],
         "workbook": None,  # {"Recipe_Master":df, "Wafer_Summary":df, "Site_Level_Raw":df}
+        "workbook_process": None,  # 업로드된 workbook이 어느 공정 기준으로 검증됐는지
         "prediction_result": None,
         "prediction_inputs": None,
         "prediction_targets": None,
@@ -72,15 +73,39 @@ init_session_state()
 
 
 def get_active_workbook() -> dict:
-    """Process Dashboard/예측에 사용할 워크북을 반환.
-    업로드된 워크북이 유효(3-시트 구조 일치)하면 그것을, 아니면 더미 워크북을 사용한다."""
-    if is_valid_workbook(st.session_state.workbook):
+    """현재 선택된 공정에 맞는 워크북을 반환.
+    업로드된 워크북이 유효(현재 공정 기준 3-시트 구조 일치)하면 그것을,
+    아니면 레포에 함께 배포된 실측 데이터를 기본값으로 사용한다."""
+    process = st.session_state.process
+    if is_valid_workbook(st.session_state.workbook, process) and st.session_state.workbook_process == process:
         return st.session_state.workbook
-    return generate_dummy_workbook()
+    return load_bundled_workbook(process)
 
 
 def using_real_data() -> bool:
-    return is_valid_workbook(st.session_state.workbook)
+    process = st.session_state.process
+    return is_valid_workbook(st.session_state.workbook, process) and st.session_state.workbook_process == process
+
+
+# ==============================================================================
+# 0. 공정 선택 (isolation / trench) — 화면 전체에 영향
+# ==============================================================================
+def create_process_selector():
+    st.markdown("## 🧪 공정 선택")
+    options = list(PROCESS_STAGE_DEFS.keys())
+    labels = {k: PROCESS_LABELS[k] for k in options}
+    selected = st.radio(
+        "분석할 공정",
+        options,
+        format_func=lambda k: labels[k],
+        horizontal=True,
+        key="process_selector",
+    )
+    if selected != st.session_state.process:
+        st.session_state.process = selected
+        st.session_state.prediction_result = None
+        st.session_state.prediction_recommendation = None
+    st.caption("공정을 바꾸면 파라미터 입력창과 예측 모델이 해당 공정 것으로 전환됩니다.")
 
 
 # ==============================================================================
@@ -88,8 +113,9 @@ def using_real_data() -> bool:
 # ==============================================================================
 def create_sidebar():
     with st.sidebar:
-        st.markdown("## 📁 데이터 업로드")
-        uploaded_file = st.file_uploader("Excel 파일 업로드 (.xlsx)", type=["xlsx"])
+        process = st.session_state.process
+        st.markdown(f"## 📁 데이터 업로드 ({PROCESS_LABELS[process]})")
+        uploaded_file = st.file_uploader("Excel 파일 업로드 (.xlsx)", type=["xlsx"], key=f"uploader_{process}")
 
         if uploaded_file is not None:
             st.session_state.uploaded_filename = uploaded_file.name
@@ -106,88 +132,91 @@ def create_sidebar():
 
                 if st.button("📥 데이터 불러오기", use_container_width=True):
                     sheets = load_required_sheets(excel_file)
-                    if is_valid_workbook(sheets):
+                    if is_valid_workbook(sheets, process):
                         st.session_state.workbook = sheets
+                        st.session_state.workbook_process = process
                         n_wafer = len(sheets["Wafer_Summary"])
                         n_site = len(sheets["Site_Level_Raw"])
                         st.success(f"로드 완료: Wafer {n_wafer}장 / Site {n_site}행")
                     else:
-                        missing = [s for s in REQUIRED_SHEETS if s not in sheets]
                         st.error(
-                            f"필요한 시트({', '.join(REQUIRED_SHEETS)}) 또는 컬럼이 맞지 않습니다. "
-                            f"누락된 시트: {missing if missing else '없음(컬럼명 확인 필요)'}"
+                            f"현재 선택한 공정({PROCESS_LABELS[process]})이 요구하는 시트/컬럼 구조와 맞지 않습니다."
                         )
             except Exception as e:
                 st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
         else:
-            st.info("Excel 파일을 업로드하지 않으면 더미 데이터로 데모가 진행됩니다.")
+            st.info("업로드하지 않으면 레포에 포함된 실측 데이터(기본 제공)로 동작합니다.")
 
         st.markdown("---")
         if using_real_data():
-            st.success("✅ 실제 업로드 데이터 사용 중")
+            st.success("✅ 업로드한 실측 데이터 사용 중")
         else:
-            st.warning("⚠️ 더미 데이터 사용 중 (파일을 업로드하고 '데이터 불러오기'를 눌러주세요)")
+            st.info("📦 기본 제공 실측 데이터 사용 중")
         st.caption("필요 시트: Recipe_Master / Wafer_Summary / Site_Level_Raw")
-        st.caption("Etch AI Decision Support System v0.3 · predict()는 실측 이력 기반 더미 로직")
+        st.caption("Etch AI Decision Support System v1.0 · RandomForest/XGBoost 기반 실제 예측")
 
 
 # ==============================================================================
 # 2. 공정 조건 입력 패널 (A. 기본정보 / B. 장비 / C. 목표 품질 / D. 현재 Recipe)
 # ==============================================================================
 def create_input_panel():
+    process = st.session_state.process
+    stage_defs = PROCESS_STAGE_DEFS[process]
     workbook = get_active_workbook()
     wafer_df = workbook["Wafer_Summary"]
     recipe_df = workbook["Recipe_Master"]
 
-    # ---- 공정 기본 정보 (현재는 데이터가 STI/Trench Etch 하나뿐이라 고정 표시) ----
+    # ---- 공정 기본 정보 ----
     st.markdown("<div class='section-title'>공정 기본 정보</div>", unsafe_allow_html=True)
-    st.caption("현재 데이터셋은 아래 1종류뿐이라 고정 표시됩니다. Recipe/Layer 종류가 늘어나면 Dropdown으로 전환됩니다.")
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Process Type", "Trench Etch")
-    a2.metric("공정 Step 수", f"{len(STAGE_DEFS)}-Step")
-    a3.metric("Step1~3 Layer", "SiON/SOC/SiO2")
-    a4.metric("Step4 Layer", "PolySi(Si Main)")
+    a1.metric("Process Type", PROCESS_LABELS[process])
+    a2.metric("공정 Step 수", f"{len(stage_defs)}-Step")
+    a3.metric("Step1 Layer", stage_defs[0]["label"])
+    a4.metric("마지막 Step Layer", stage_defs[-1]["label"])
 
-    # ---- 장비 및 Chamber 선택 (Chamber는 전체 목록에서 자유롭게 선택 가능) ----
+    # ---- 장비 및 Chamber 선택 ----
     st.markdown("<div class='section-title'>장비 및 Chamber 선택</div>", unsafe_allow_html=True)
     b1, b2, b3 = st.columns(3)
     with b1:
-        equipment = st.selectbox("Equipment Model", sorted(wafer_df["Equipment_Model"].unique()))
+        equipment = st.selectbox("Equipment Model", sorted(wafer_df["Equipment_Model"].unique()), key=f"eq_{process}")
     with b2:
-        chamber = st.selectbox("Chamber ID", sorted(wafer_df["Chamber_ID"].unique()))
+        chamber_choices = sorted(
+            wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].unique()
+        ) or sorted(wafer_df["Chamber_ID"].unique())
+        chamber = st.selectbox("Chamber ID", chamber_choices, key=f"ch_{process}")
     recipe_options = ordered_recipe_versions(recipe_df)
     with b3:
-        recipe = st.selectbox("Recipe (참고용 베이스라인)", recipe_options)
+        recipe = st.selectbox("Recipe (참고용 베이스라인)", recipe_options, key=f"recipe_{process}")
 
-    stage_table = get_recipe_stage_table(recipe_df, recipe)
+    stage_table = get_recipe_stage_table(recipe_df, recipe, stage_defs)
     if not stage_table.empty:
-        with st.expander(f"📋 Recipe '{recipe}' 실제 Stage 조건 (참고용)"):
-            st.dataframe(stage_table, use_container_width=True, hide_index=True)
+        st.markdown(f"**Recipe '{recipe}' 실제 Stage 조건 (참고용)**")
+        st.dataframe(stage_table, use_container_width=True, hide_index=True)
 
-    # ---- 목표 품질 설정 (AI가 평가·추천할 때 사용할 기준값, 매번 사용자 입력) ----
+    # ---- 목표 품질 설정 ----
     st.markdown("<div class='section-title'>목표 품질 설정</div>", unsafe_allow_html=True)
     st.caption("데이터셋에는 없는 값으로, 평가·추천의 기준이 됩니다. 기본값은 가장 성숙한 Recipe의 실측 평균입니다.")
     defaults = get_default_targets(wafer_df, recipe_df)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        target_top_cd = st.number_input("Target Top CD (nm)", value=defaults["target_top_cd"])
+        target_top_cd = st.number_input("Target Top CD (nm)", value=defaults["target_top_cd"], key=f"ttop_{process}")
     with c2:
-        target_mid_cd = st.number_input("Target Mid CD (nm)", value=defaults["target_mid_cd"])
+        target_mid_cd = st.number_input("Target Mid CD (nm)", value=defaults["target_mid_cd"], key=f"tmid_{process}")
     with c3:
-        target_bottom_cd = st.number_input("Target Bottom CD (nm)", value=defaults["target_bottom_cd"])
+        target_bottom_cd = st.number_input("Target Bottom CD (nm)", value=defaults["target_bottom_cd"], key=f"tbot_{process}")
     with c4:
-        target_depth = st.number_input("Target Depth (nm)", value=defaults["target_depth"])
+        target_depth = st.number_input("Target Depth (nm)", value=defaults["target_depth"], key=f"tdep_{process}")
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
-        max_cd_uniformity = st.number_input("Maximum CD Uniformity (%)", value=defaults["max_cd_uniformity"], step=0.5)
+        max_cd_uniformity = st.number_input("Maximum CD Uniformity (%)", value=defaults["max_cd_uniformity"], step=0.5, key=f"mcdu_{process}")
     with c6:
-        max_depth_uniformity = st.number_input("Maximum Depth Uniformity (%)", value=defaults["max_depth_uniformity"], step=0.5)
+        max_depth_uniformity = st.number_input("Maximum Depth Uniformity (%)", value=defaults["max_depth_uniformity"], step=0.5, key=f"mdu_{process}")
     with c7:
-        min_pass_rate = st.number_input("Minimum Pass Rate (%)", value=defaults["min_pass_rate"], step=1.0)
+        min_pass_rate = st.number_input("Minimum Pass Rate (%)", value=defaults["min_pass_rate"], step=1.0, key=f"mpr_{process}")
     with c8:
-        max_defect_count = st.number_input("Maximum Defect Count (건)", value=defaults["max_defect_count"], step=1.0)
+        max_defect_count = st.number_input("Maximum Defect Count (건)", value=defaults["max_defect_count"], step=1.0, key=f"mdc_{process}")
 
     targets = {
         "target_top_cd": target_top_cd, "target_mid_cd": target_mid_cd,
@@ -196,48 +225,46 @@ def create_input_panel():
         "min_pass_rate": min_pass_rate, "max_defect_count": max_defect_count,
     }
 
-    # ---- 현재 공정 조건 입력 (Stage별 실제 조건, Recipe 선택 시 그 Recipe의 실측값으로 초기화) ----
+    # ---- 현재 공정 조건 입력 (모든 Stage를 한 번에 펼쳐서 표시 — 멘토 피드백 반영) ----
     st.markdown("<div class='section-title'>현재 공정 조건 입력</div>", unsafe_allow_html=True)
-    st.caption("Stage(S1~S4)별 Time/RF Bias/Pressure는 선택한 Recipe 대비 What-if 예측에 반영됩니다. Gas Flow는 입력창만 우선 제공됩니다.")
+    st.caption(f"{PROCESS_LABELS[process]} 전체 {len(stage_defs)}개 Stage를 한 화면에서 바로 확인·수정할 수 있습니다.")
 
-    stage_defaults = stage_inputs_from_recipe(recipe_df, recipe)
+    stage_defaults = stage_inputs_from_recipe(recipe_df, recipe, stage_defs)
     inputs = {"equipment": equipment, "chamber": chamber, "recipe": recipe}
     match = recipe_df[recipe_df["Recipe_Version"] == recipe]
     recipe_row = match.iloc[0] if not match.empty else None
 
-    for stage in STAGE_DEFS:
+    for stage in stage_defs:
         key = stage["key"].lower()
-        with st.expander(f"{stage['label']}", expanded=False):
-            d1, d2, d3 = st.columns(3)
-            with d1:
-                inputs[f"{key}_time"] = st.number_input(
-                    "Etch Time (s)", value=stage_defaults.get(f"{key}_time", 0.0),
-                    key=f"{key}_time_{recipe}",
-                )
-            with d2:
-                inputs[f"{key}_rf_bias"] = st.number_input(
-                    "RF Bias (W)", value=stage_defaults.get(f"{key}_rf_bias", 0.0),
-                    key=f"{key}_rf_bias_{recipe}",
-                )
-            with d3:
-                inputs[f"{key}_pressure"] = st.number_input(
-                    "Pressure (mT)", value=stage_defaults.get(f"{key}_pressure", 0.0),
-                    key=f"{key}_pressure_{recipe}",
-                )
+        st.markdown(f"**{stage['label']}**")
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            inputs[f"{key}_time"] = st.number_input(
+                "Etch Time (s)", value=stage_defaults.get(f"{key}_time", 0.0),
+                key=f"{key}_time_{process}_{recipe}",
+            )
+        with d2:
+            inputs[f"{key}_rf_bias"] = st.number_input(
+                "RF Bias (W)", value=stage_defaults.get(f"{key}_rf_bias", 0.0),
+                key=f"{key}_rf_bias_{process}_{recipe}",
+            )
+        with d3:
+            inputs[f"{key}_pressure"] = st.number_input(
+                "Pressure (mT)", value=stage_defaults.get(f"{key}_pressure", 0.0),
+                key=f"{key}_pressure_{process}_{recipe}",
+            )
 
-            # Gas Flow — 멘토 가이드(O2 Flow가 핵심 영향 변수)를 반영해 입력창으로 노출.
-            # 아직 predict()의 What-if 보정식에는 연결하지 않았고(추후 반영 예정), 입력/저장만 우선 지원한다.
-            gas_cols_ui = st.columns(len(stage["gas_cols"]))
-            for gas_col_widget, gas_col_name in zip(gas_cols_ui, stage["gas_cols"]):
-                gas_label = gas_col_name.split("_")[1]
-                default_val = float(recipe_row[gas_col_name]) if recipe_row is not None and gas_col_name in recipe_row.index else 0.0
-                input_key = gas_col_name.lower()
-                with gas_col_widget:
-                    inputs[input_key] = st.number_input(
-                        f"{gas_label} Flow (sccm)", value=default_val,
-                        key=f"{input_key}_{recipe}",
-                    )
-            st.caption("Gas Flow는 입력만 반영된 상태이며, 예측 보정 로직 연결은 추후 진행됩니다.")
+        gas_cols_ui = st.columns(len(stage["gas_cols"]))
+        for gas_col_widget, gas_col_name in zip(gas_cols_ui, stage["gas_cols"]):
+            gas_label = gas_col_name.split("_")[1]
+            default_val = float(recipe_row[gas_col_name]) if recipe_row is not None and gas_col_name in recipe_row.index else 0.0
+            input_key = gas_col_name.lower()
+            with gas_col_widget:
+                inputs[input_key] = st.number_input(
+                    f"{gas_label} Flow (sccm)", value=default_val,
+                    key=f"{input_key}_{process}_{recipe}",
+                )
+        st.markdown("---")
 
     submitted = st.button("🔮 예측 · 평가 · 추천 실행", type="primary", use_container_width=True)
 
@@ -249,6 +276,11 @@ def create_input_panel():
 # ==============================================================================
 def show_prediction(result: dict):
     st.markdown("<div class='section-title'>현재 Recipe 품질 예측</div>", unsafe_allow_html=True)
+
+    if result.get("_error"):
+        st.error(f"예측할 수 없습니다: {result['_error']}")
+        return
+
     cols = st.columns(4)
     items = [
         ("Top CD", result["Top CD"], "nm"), ("Mid CD", result["Mid CD"], "nm"),
@@ -268,7 +300,14 @@ def show_prediction(result: dict):
         render_status_badge("Overall Pass Rate", f'{result["Overall Spec Pass Rate"]}%', get_pass_rate_status(result["Overall Spec Pass Rate"]))
     with q_cols[3]:
         render_status_badge("Particle 발생 확률", f'{result["Particle Probability"]}%', get_particle_status(result["Particle"]))
-    st.caption("※ Uniformity는 변동계수(CV%) 기준으로 값이 낮을수록 좋습니다. Particle 발생 확률은 과거 이력 중 Defect>3건 Wafer 비율입니다.")
+    st.caption(
+        f"※ Uniformity는 변동계수(CV%) 기준으로 값이 낮을수록 좋습니다. "
+        f"모델 기준 상대 품질지수(v3) {result.get('_quality_index_v3_pct', '-')}점, "
+        f"가장 취약한 위치: {result.get('_worst_zone', '-')} Zone."
+    )
+    if result.get("_warnings"):
+        for w in result["_warnings"]:
+            st.warning(w)
 
     chart_cols = st.columns(3)
     with chart_cols[0]:
@@ -329,7 +368,7 @@ def show_target_evaluation(evaluation: dict):
 # ==============================================================================
 # Output C. 최적 Recipe 추천
 # ==============================================================================
-def show_recommendation(current_inputs: dict, recommendation: dict, recipe_df: pd.DataFrame):
+def show_recommendation(current_inputs: dict, recommendation: dict, recipe_df: pd.DataFrame, stage_defs):
     st.markdown("<div class='section-title'>최적 Recipe 추천</div>", unsafe_allow_html=True)
 
     if recommendation is None:
@@ -338,7 +377,7 @@ def show_recommendation(current_inputs: dict, recommendation: dict, recipe_df: p
 
     st.markdown(f"현재 조건(Equipment/Chamber)에서 알려진 Recipe 중 **{recommendation['recipe']}**의 종합 품질 점수가 가장 높게 예상됩니다.")
 
-    diff_rows = build_stage_diff_table(current_inputs, recommendation["inputs"], recipe_df)
+    diff_rows = build_stage_diff_table(current_inputs, recommendation["inputs"], recipe_df, stage_defs)
     if diff_rows:
         st.markdown("**추천 Recipe Parameter (현재값 대비 변경점)**")
         st.dataframe(pd.DataFrame(diff_rows), use_container_width=True, hide_index=True)
@@ -395,24 +434,24 @@ def show_comparison(current_result: dict, current_score: dict, recommendation: d
 # ==============================================================================
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
-def create_process_dashboard_selectors(workbook: dict):
+def create_process_dashboard_selectors(workbook: dict, process: str):
     st.markdown("### 🧭 Process Dashboard 조건 선택")
     wafer_df = workbook["Wafer_Summary"]
     recipe_df = workbook["Recipe_Master"]
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        equipment = st.selectbox("Equipment", sorted(wafer_df["Equipment_Model"].unique()), key="pd_equipment")
+        equipment = st.selectbox("Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}")
     df1 = wafer_df[wafer_df["Equipment_Model"] == equipment]
 
     with col2:
         chamber_choices = sorted(df1["Chamber_ID"].unique()) or sorted(wafer_df["Chamber_ID"].unique())
-        chamber = st.selectbox("Chamber", chamber_choices, key="pd_chamber")
+        chamber = st.selectbox("Chamber", chamber_choices, key=f"pd_chamber_{process}")
     df2 = df1[df1["Chamber_ID"] == chamber]
 
     with col3:
         recipe_choices = ordered_recipe_versions(recipe_df, df2["Recipe_Version"].unique()) or ordered_recipe_versions(recipe_df)
-        recipe = st.selectbox("Recipe", recipe_choices, key="pd_recipe")
+        recipe = st.selectbox("Recipe", recipe_choices, key=f"pd_recipe_{process}")
 
     filtered_wafer = df2[df2["Recipe_Version"] == recipe]
 
@@ -498,16 +537,18 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame):
 
 
 # ==============================================================================
-# 4. Wafer Map
+# 4. Wafer Map — Top/Mid/Bottom CD와 Depth를 한 번에 표시 (멘토 피드백 반영)
 # ==============================================================================
 def show_wafer_map(filtered_site: pd.DataFrame):
-    st.markdown("### 🎯 Wafer Map")
+    st.markdown("### 🎯 Wafer Map (Top/Mid/Bottom CD · Depth 한눈에 비교)")
     if filtered_site.empty:
         st.info("선택한 조건에 해당하는 Site 데이터가 없습니다.")
         return
 
-    label = st.selectbox("표시할 지표 선택", list(WAFER_MAP_METRICS.keys()), key="wafer_map_metric")
-    st.plotly_chart(build_wafer_map(filtered_site, WAFER_MAP_METRICS[label], label), use_container_width=True)
+    cols = st.columns(4)
+    for col, (label, metric_col) in zip(cols, WAFER_MAP_METRICS.items()):
+        with col:
+            st.plotly_chart(build_wafer_map(filtered_site, metric_col, label), use_container_width=True)
     st.caption("Zone: Center(중심) → Mid → Edge → Extreme Edge(바깥쪽) · 선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시")
 
 
@@ -540,7 +581,7 @@ def show_zone_analysis(filtered_site: pd.DataFrame):
 
 
 # ==============================================================================
-# 6. AI 분석 (Process Dashboard, Rule Base)
+# 6. AI 분석 (Process Dashboard, Rule Base) — 순서상 맨 위로 (멘토 피드백 반영)
 # ==============================================================================
 def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.DataFrame):
     st.markdown("### 🤖 AI 분석")
@@ -553,7 +594,10 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
 # 메인 실행부
 # ==============================================================================
 def main():
+    create_process_selector()
     create_sidebar()
+    process = st.session_state.process
+    stage_defs = PROCESS_STAGE_DEFS[process]
 
     st.markdown("<h1 class='main-title'>🧪 Etch AI Decision Support System</h1>", unsafe_allow_html=True)
     st.markdown(
@@ -569,11 +613,13 @@ def main():
         inputs, targets, submitted = create_input_panel()
 
         if submitted:
-            result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"])
-            evaluation = evaluate_against_target(result, targets)
-            recommendation = recommend_best_recipe(
-                inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"]
-            )
+            result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process)
+            evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
+            recommendation = None
+            if not result.get("_error"):
+                recommendation = recommend_best_recipe(
+                    inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
+                )
 
             st.session_state.prediction_result = result
             st.session_state.prediction_inputs = inputs
@@ -584,32 +630,36 @@ def main():
         if st.session_state.prediction_result is not None:
             st.markdown("---")
             show_prediction(st.session_state.prediction_result)
-            st.markdown("---")
-            show_target_evaluation(st.session_state.prediction_evaluation)
-            st.markdown("---")
-            show_recommendation(
-                st.session_state.prediction_inputs, st.session_state.prediction_recommendation, workbook["Recipe_Master"]
-            )
-            st.markdown("---")
-            show_comparison(
-                st.session_state.prediction_result,
-                st.session_state.prediction_evaluation["score"],
-                st.session_state.prediction_recommendation,
-            )
+            if not st.session_state.prediction_result.get("_error"):
+                st.markdown("---")
+                show_target_evaluation(st.session_state.prediction_evaluation)
+                st.markdown("---")
+                show_recommendation(
+                    st.session_state.prediction_inputs, st.session_state.prediction_recommendation,
+                    workbook["Recipe_Master"], stage_defs,
+                )
+                st.markdown("---")
+                show_comparison(
+                    st.session_state.prediction_result,
+                    st.session_state.prediction_evaluation["score"],
+                    st.session_state.prediction_recommendation,
+                )
         else:
             st.info("공정 조건과 목표 품질을 입력하고 '예측 · 평가 · 추천 실행' 버튼을 눌러주세요.")
 
-    # ---- Tab 2: Process Dashboard (조건 선택 → Summary → 시각화 → Wafer Map → Zone 분석 → AI 분석) ----
+    # ---- Tab 2: Process Dashboard (조건 선택 → AI 분석(맨 위) → Summary → 시각화 → Wafer Map → Zone 분석) ----
     with tab2:
         workbook = get_active_workbook()
-        filtered_wafer, filtered_site = create_process_dashboard_selectors(workbook)
+        filtered_wafer, filtered_site = create_process_dashboard_selectors(workbook, process)
 
+        st.markdown("---")
+        zone_summary_preview = get_zone_summary(filtered_site) if not filtered_site.empty else None
+        show_dashboard_ai_analysis(filtered_wafer, zone_summary_preview)
         st.markdown("---")
         show_process_summary(filtered_wafer)
         show_quality_visualization(filtered_wafer)
         show_wafer_map(filtered_site)
-        zone_summary = show_zone_analysis(filtered_site)
-        show_dashboard_ai_analysis(filtered_wafer, zone_summary)
+        show_zone_analysis(filtered_site)
 
 
 if __name__ == "__main__":

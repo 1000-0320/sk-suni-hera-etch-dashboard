@@ -1,15 +1,18 @@
 """
 Etch AI Decision Support System - 데이터 유틸리티 모듈
 
-실제 업로드 대상 워크북(예: trench recipe full dataset)은 3개 시트로 구성된다.
+실제 업로드 대상 워크북(isolation / trench)은 3개 시트로 구성된다.
 
-- Recipe_Master  : Recipe_Version별 4-Stage(S1~S4) 공정 조건 (Time/Gas/RF Bias/Pressure)
+- Recipe_Master  : Recipe_Version별 Stage(S1~S2 또는 S1~S4) 공정 조건 (Time/Gas/RF Bias/Pressure)
 - Wafer_Summary  : Wafer 1장당 1행 (Top/Mid/Bottom CD, Depth, Uniformity%, Pass Rate, Defect)
 - Site_Level_Raw : Wafer 1장당 25개 측정 Site (Zone/Radius_frac/Angle_deg 포함, Wafer Map용)
 
 Process Dashboard와 predict()는 이 3-시트 구조를 전제로 동작한다.
-실제 워크북이 없거나 구조가 다르면 동일한 스키마의 더미 데이터로 자동 대체된다.
+isolation은 Depth 원본 단위가 Angstrom(A)이라 로딩 시 nm으로 환산한 컬럼을 추가해,
+이후 로직(charts.py 포함)은 항상 *_nm 컬럼만 보면 되도록 통일한다.
 """
+
+import os
 
 import numpy as np
 import pandas as pd
@@ -20,53 +23,23 @@ import streamlit as st
 # ----------------------------------------------------------------------------
 REQUIRED_SHEETS = ["Recipe_Master", "Wafer_Summary", "Site_Level_Raw"]
 
-REQUIRED_COLUMNS = {
-    "Recipe_Master": [
-        "Recipe_Version",
-        "S1_Time_s", "S1_RF_Bias_W", "S1_Pressure_mT",
-        "S4_Time_s", "S4_RF_Bias_W", "S4_Pressure_mT",
-    ],
-    "Wafer_Summary": [
-        "Recipe_Version", "Wafer_ID", "Lot_ID", "Equipment_Model", "Chamber_ID",
-        "Top_CD_Mean_nm", "Mid_CD_Mean_nm", "Bottom_CD_Mean_nm", "Depth_Mean_nm",
-        "Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct",
-        "Depth_Uniformity_pct", "Total_Defect_Count", "Overall_Spec_Pass_Rate_pct",
-    ],
-    "Site_Level_Raw": [
-        "Recipe_Version", "Wafer_ID", "Lot_ID", "Equipment_Model", "Chamber_ID",
-        "Zone", "Radius_frac", "Angle_deg",
-        "Top_CD_nm", "Mid_CD_nm", "Bottom_CD_nm", "Depth_nm",
-        "Top_CD_Spec_Pass", "Mid_CD_Spec_Pass", "Bottom_CD_Spec_Pass", "Depth_Spec_Pass",
-        "Defect_Count",
-    ],
-}
-
 # Wafer Map / Zone 분석에서 사용하는 Zone 순서 및 대표 반경(중심=0 ~ 바깥쪽=1에 가까움)
 ZONE_ORDER = ["Center", "Mid", "Edge", "Extreme Edge"]
 ZONE_RADIUS = {"Center": 0.0, "Mid": 0.55, "Edge": 0.85, "Extreme Edge": 0.97}
 
-# Total_Defect_Count(Wafer 1장 = Site 25개 합산)는 실제 데이터 기준 94%가 1건 이상이라
+# Total_Defect_Count(Wafer 1장 = Site 25개 합산)는 실제 데이터 기준 대다수가 1건 이상이라
 # ">0"을 "Particle 발생" 기준으로 쓰면 거의 모든 Wafer가 발생으로 잡혀 의미가 없어진다.
-# 전체 236장 분포(중앙값 4)를 참고해 "3건 초과"를 발생 기준으로 사용한다 (근사치, 조정 가능).
+# 전체 분포(중앙값 근처)를 참고해 "3건 초과"를 발생 기준으로 사용한다 (근사치, 조정 가능).
 PARTICLE_DEFECT_THRESHOLD = 3
-
-# 실제 파일과 동일한 25-Site 측정 템플릿 (Site_ID, Zone, Radius_frac, Angle_deg)
-_SITE_TEMPLATE = (
-    [("C1", "Center", 0.0, None)]
-    + [
-        (sid, "Mid", 0.55, angle)
-        for sid, angle in [("Mid-Right", 0.0), ("Mid-Top", 90.0), ("Mid-Left", 180.0), ("Mid-Bottom", 270.0)]
-    ]
-    + [(f"Edge-{i:02d}", "Edge", 0.85, (i - 1) * 36.0) for i in range(1, 11)]
-    + [(f"ExtEdge-{i:02d}", "Extreme Edge", 0.97, 18.0 + (i - 1) * 36.0) for i in range(1, 11)]
-)
 
 _DUMMY_RECIPES = ["Base", "Rev1", "Rev2", "Rev3", "Rev4", "Rev5"]
 _DUMMY_EQUIPMENTS = ["EQP-A", "EQP-B"]
 _DUMMY_CHAMBERS = ["CH-A", "CH-B"]
 
-# 4-Stage Recipe 정의 (실제 Trench Etch 흐름: SiON Strip -> SOC Open -> SiO2 HM Open -> Si Main Etch)
-STAGE_DEFS = [
+# ----------------------------------------------------------------------------
+# 공정별 Stage 정의
+# ----------------------------------------------------------------------------
+TRENCH_STAGE_DEFS = [
     {"key": "S1", "label": "S1 (SiON Strip)", "time_col": "S1_Time_s",
      "gas_cols": ["S1_CF4_sccm", "S1_CHF3_sccm"], "bias_col": "S1_RF_Bias_W", "pressure_col": "S1_Pressure_mT"},
     {"key": "S2", "label": "S2 (SOC Open)", "time_col": "S2_Time_s",
@@ -77,16 +50,92 @@ STAGE_DEFS = [
      "gas_cols": ["S4_HBr_sccm", "S4_Cl2_sccm"], "bias_col": "S4_RF_Bias_W", "pressure_col": "S4_Pressure_mT"},
 ]
 
+ISOLATION_STAGE_DEFS = [
+    {"key": "S1", "label": "S1 (SiO2 Main Etch)", "time_col": "S1_Time_s",
+     "gas_cols": ["S1_CHF3_sccm", "S1_C4F8_sccm", "S1_O2_sccm"], "bias_col": "S1_RF_Bias_W", "pressure_col": "S1_Pressure_mT"},
+    {"key": "S2", "label": "S2 (PolySi Etch)", "time_col": "S2_Time_s",
+     "gas_cols": ["S2_HBr_sccm", "S2_Cl2_sccm", "S2_O2_sccm"], "bias_col": "S2_RF_Bias_W", "pressure_col": "S2_Pressure_mT"},
+]
 
-def is_valid_workbook(sheets: dict) -> bool:
-    """업로드된 시트 dict가 Process Dashboard/predict()가 요구하는 3-시트 구조를 갖췄는지 확인"""
+PROCESS_STAGE_DEFS = {"isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS}
+PROCESS_LABELS = {"isolation": "Isolation (STI) Etch", "trench": "Trench Etch"}
+
+# 하위 호환용 기본값(과거 코드가 STAGE_DEFS를 직접 참조하던 부분 대비)
+STAGE_DEFS = TRENCH_STAGE_DEFS
+
+# isolation은 Depth 원본이 Angstrom. 로딩 시 nm 환산 컬럼을 만들어 이후 로직은 전부 nm만 보게 한다.
+_ANGSTROM_PER_NM = 10.0
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_FILES = {
+    "isolation": os.path.join(BASE_DIR, "data", "isolation_dataset.xlsx"),
+    "trench": os.path.join(BASE_DIR, "data", "trench_dataset.xlsx"),
+}
+
+
+def build_required_columns(process_key: str) -> dict:
+    """공정(Stage 수가 다름)에 맞춰 업로드 검증용 필수 컬럼을 동적으로 구성."""
+    stage_defs = PROCESS_STAGE_DEFS[process_key]
+    first, last = stage_defs[0], stage_defs[-1]
+    return {
+        "Recipe_Master": [
+            "Recipe_Version",
+            first["time_col"], first["bias_col"], first["pressure_col"],
+            last["time_col"], last["bias_col"], last["pressure_col"],
+        ],
+        "Wafer_Summary": [
+            "Recipe_Version", "Wafer_ID", "Lot_ID", "Equipment_Model", "Chamber_ID",
+            "Top_CD_Mean_nm", "Mid_CD_Mean_nm", "Bottom_CD_Mean_nm",
+            "Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct",
+            "Total_Defect_Count", "Overall_Spec_Pass_Rate_pct",
+        ],
+        "Site_Level_Raw": [
+            "Recipe_Version", "Wafer_ID", "Lot_ID", "Equipment_Model", "Chamber_ID",
+            "Zone", "Radius_frac", "Angle_deg",
+            "Top_CD_nm", "Mid_CD_nm", "Bottom_CD_nm",
+            "Top_CD_Spec_Pass", "Mid_CD_Spec_Pass", "Bottom_CD_Spec_Pass", "Depth_Spec_Pass",
+            "Defect_Count",
+        ],
+    }
+
+
+def is_valid_workbook(sheets: dict, process_key: str = "trench") -> bool:
+    """업로드된 시트 dict가 선택한 공정이 요구하는 3-시트 구조를 갖췄는지 확인.
+    Depth 컬럼은 공정마다 단위가 달라(_A vs _nm) 별도로 확인한다."""
     if not sheets:
         return False
-    for sheet_name, required_cols in REQUIRED_COLUMNS.items():
+    required = build_required_columns(process_key)
+    for sheet_name, required_cols in required.items():
         df = sheets.get(sheet_name)
         if df is None or not all(col in df.columns for col in required_cols):
             return False
-    return True
+
+    wafer_df = sheets.get("Wafer_Summary")
+    site_df = sheets.get("Site_Level_Raw")
+    has_depth_wafer = any(c in wafer_df.columns for c in ("Depth_Mean_nm", "Depth_Mean_A"))
+    has_depth_site = any(c in site_df.columns for c in ("Depth_nm", "Depth_A"))
+    return bool(has_depth_wafer and has_depth_site)
+
+
+def _normalize_depth_units(sheets: dict) -> dict:
+    """Angstrom 단위 Depth 컬럼(isolation)을 nm 환산 컬럼으로 보강.
+    이미 nm 컬럼이 있으면(trench) 그대로 둔다."""
+    wafer_df = sheets.get("Wafer_Summary")
+    site_df = sheets.get("Site_Level_Raw")
+
+    if wafer_df is not None and "Depth_Mean_nm" not in wafer_df.columns and "Depth_Mean_A" in wafer_df.columns:
+        wafer_df = wafer_df.copy()
+        wafer_df["Depth_Mean_nm"] = wafer_df["Depth_Mean_A"] / _ANGSTROM_PER_NM
+        if "Depth_Std_A" in wafer_df.columns:
+            wafer_df["Depth_Std_nm"] = wafer_df["Depth_Std_A"] / _ANGSTROM_PER_NM
+        sheets = {**sheets, "Wafer_Summary": wafer_df}
+
+    if site_df is not None and "Depth_nm" not in site_df.columns and "Depth_A" in site_df.columns:
+        site_df = site_df.copy()
+        site_df["Depth_nm"] = site_df["Depth_A"] / _ANGSTROM_PER_NM
+        sheets = {**sheets, "Site_Level_Raw": site_df}
+
+    return sheets
 
 
 def load_required_sheets(excel_file: pd.ExcelFile) -> dict:
@@ -95,18 +144,41 @@ def load_required_sheets(excel_file: pd.ExcelFile) -> dict:
     for name in REQUIRED_SHEETS:
         if name in excel_file.sheet_names:
             sheets[name] = excel_file.parse(name)
-    return sheets
+    return _normalize_depth_units(sheets)
+
+
+@st.cache_data(show_spinner="기본 제공 데이터를 불러오는 중입니다...")
+def load_bundled_workbook(process_key: str) -> dict:
+    """레포에 함께 배포된 실측 데이터셋(data/*.xlsx)을 기본값으로 불러온다.
+    업로드를 하지 않아도 배포된 대시보드가 바로 동작하도록 하기 위함."""
+    path = DEFAULT_DATA_FILES[process_key]
+    if not os.path.exists(path):
+        return generate_dummy_workbook()
+    xls = pd.ExcelFile(path)
+    sheets = {}
+    for name in REQUIRED_SHEETS:
+        if name in xls.sheet_names:
+            sheets[name] = xls.parse(name)
+    return _normalize_depth_units(sheets)
 
 
 # ----------------------------------------------------------------------------
-# 더미 워크북 생성 (업로드 전 데모 / 워크북 구조가 맞지 않을 때 대체용)
+# 더미 워크북 생성 (배포 데이터도 없고 업로드도 없을 때의 최종 폴백)
 # ----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def generate_dummy_workbook(wafers_per_combo: int = 3, seed: int = 42) -> dict:
-    """실제 워크북과 동일한 3-시트 스키마의 더미 데이터 생성"""
+    """실제 워크북과 유사한 3-시트 스키마의 더미 데이터 생성 (trench 4-Stage 형태 기준)"""
     rng = np.random.default_rng(seed)
+    _SITE_TEMPLATE = (
+        [("C1", "Center", 0.0, None)]
+        + [
+            (sid, "Mid", 0.55, angle)
+            for sid, angle in [("Mid-Right", 0.0), ("Mid-Top", 90.0), ("Mid-Left", 180.0), ("Mid-Bottom", 270.0)]
+        ]
+        + [(f"Edge-{i:02d}", "Edge", 0.85, (i - 1) * 36.0) for i in range(1, 11)]
+        + [(f"ExtEdge-{i:02d}", "Extreme Edge", 0.97, 18.0 + (i - 1) * 36.0) for i in range(1, 11)]
+    )
 
-    # ---- Recipe_Master: Recipe가 진행될수록 RF Bias 상승 / Pressure 하강 트렌드 ----
     recipe_rows = []
     for i, recipe in enumerate(_DUMMY_RECIPES):
         progress = i / (len(_DUMMY_RECIPES) - 1)
@@ -126,16 +198,15 @@ def generate_dummy_workbook(wafers_per_combo: int = 3, seed: int = 42) -> dict:
         })
     recipe_master = pd.DataFrame(recipe_rows)
 
-    # ---- Wafer_Summary + Site_Level_Raw ----
     wafer_rows, site_rows = [], []
     wafer_seq = 1
     for i, recipe in enumerate(_DUMMY_RECIPES):
-        progress = i / (len(_DUMMY_RECIPES) - 1)  # 0(초기) ~ 1(성숙 recipe)
+        progress = i / (len(_DUMMY_RECIPES) - 1)
         base_top, base_mid = 260.0, 260.0
-        base_bottom = 265.0 - progress * 30.0       # recipe 성숙할수록 taper 심화(bottom 감소)
+        base_bottom = 265.0 - progress * 30.0
         base_depth = 1050.0 + progress * 150.0
-        base_pass = 20.0 + progress * 78.0            # 초기 낮은 Pass Rate -> 후기 높은 Pass Rate
-        base_cd_var = 3.5 - progress * 2.3            # CV% 감소(개선)
+        base_pass = 20.0 + progress * 78.0
+        base_cd_var = 3.5 - progress * 2.3
         base_depth_var = 30.0 - progress * 27.0
 
         for equipment in _DUMMY_EQUIPMENTS:
@@ -240,15 +311,16 @@ def get_zone_summary(site_df: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
-def get_recipe_stage_table(recipe_master_df: pd.DataFrame, recipe_version: str) -> pd.DataFrame:
-    """선택한 Recipe_Version의 Stage(S1~S4) 조건을 보기 좋은 표 형태로 변환"""
+def get_recipe_stage_table(recipe_master_df: pd.DataFrame, recipe_version: str, stage_defs=None) -> pd.DataFrame:
+    """선택한 Recipe_Version의 Stage별 조건을 보기 좋은 표 형태로 변환"""
+    stage_defs = stage_defs or STAGE_DEFS
     match = recipe_master_df[recipe_master_df["Recipe_Version"] == recipe_version]
     if match.empty:
         return pd.DataFrame()
     row = match.iloc[0]
 
     records = []
-    for stage in STAGE_DEFS:
+    for stage in stage_defs:
         gas_str = " / ".join(f"{c.split('_')[1]} {row[c]:g}sccm" for c in stage["gas_cols"] if c in row.index)
         records.append({
             "Stage": stage["label"],
@@ -260,19 +332,23 @@ def get_recipe_stage_table(recipe_master_df: pd.DataFrame, recipe_version: str) 
     return pd.DataFrame(records)
 
 
-def stage_inputs_from_recipe(recipe_master_df: pd.DataFrame, recipe_version: str) -> dict:
+def stage_inputs_from_recipe(recipe_master_df: pd.DataFrame, recipe_version: str, stage_defs=None) -> dict:
     """선택한 Recipe의 실제 Stage별 Time/RF Bias/Pressure를 dict로 반환
     (입력 패널 기본값 채우기 + 후보 Recipe를 '그 레시피 그대로' 평가할 때 사용)"""
+    stage_defs = stage_defs or STAGE_DEFS
     match = recipe_master_df[recipe_master_df["Recipe_Version"] == recipe_version]
     if match.empty:
         return {}
     row = match.iloc[0]
     result = {}
-    for stage in STAGE_DEFS:
+    for stage in stage_defs:
         key = stage["key"].lower()
         result[f"{key}_time"] = float(row[stage["time_col"]])
         result[f"{key}_rf_bias"] = float(row[stage["bias_col"]])
         result[f"{key}_pressure"] = float(row[stage["pressure_col"]])
+        for gas_col in stage["gas_cols"]:
+            if gas_col in row.index:
+                result[gas_col.lower()] = float(row[gas_col])
     return result
 
 

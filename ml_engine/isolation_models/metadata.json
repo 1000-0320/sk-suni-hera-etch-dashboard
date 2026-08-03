@@ -1,0 +1,943 @@
+{
+  "schema_version": 3,
+  "created_utc": "2026-08-03T05:12:29.351038+00:00",
+  "source_files": [
+    "isolation recipe full dataset_2.xlsx",
+    "recipe master_2.csv"
+  ],
+  "feature_columns": [
+    "S1_Time_s",
+    "S1_CHF3_sccm",
+    "S1_C4F8_sccm",
+    "S1_RF_Bias_W",
+    "S1_Pressure_mT",
+    "S1_O2_sccm",
+    "S2_Time_s",
+    "S2_HBr_sccm",
+    "S2_Cl2_sccm",
+    "S2_RF_Bias_W",
+    "S2_Pressure_mT",
+    "S2_O2_sccm",
+    "Radius_frac",
+    "Angle_sin",
+    "Angle_cos",
+    "Equipment_Model",
+    "Chamber_ID",
+    "Zone"
+  ],
+  "numeric_features": [
+    "S1_Time_s",
+    "S1_CHF3_sccm",
+    "S1_C4F8_sccm",
+    "S1_RF_Bias_W",
+    "S1_Pressure_mT",
+    "S1_O2_sccm",
+    "S2_Time_s",
+    "S2_HBr_sccm",
+    "S2_Cl2_sccm",
+    "S2_RF_Bias_W",
+    "S2_Pressure_mT",
+    "S2_O2_sccm",
+    "Radius_frac",
+    "Angle_sin",
+    "Angle_cos"
+  ],
+  "categorical_features": [
+    "Equipment_Model",
+    "Chamber_ID",
+    "Zone"
+  ],
+  "regression_targets": [
+    "Top_CD_nm",
+    "Mid_CD_nm",
+    "Bottom_CD_nm",
+    "Depth_A"
+  ],
+  "classification_target": "Particle_Defect = 1 when site Defect_Count > 0",
+  "group_key": "Recipe_Version|Lot_ID|Wafer_ID",
+  "selected_models": {
+    "Top_CD_nm": {
+      "family": "RandomForest",
+      "file": "Top_CD_nm__RandomForest.joblib",
+      "selection_rule": "lowest whole-recipe-holdout CV MAE; chosen for simulator robustness"
+    },
+    "Mid_CD_nm": {
+      "family": "RandomForest",
+      "file": "Mid_CD_nm__RandomForest.joblib",
+      "selection_rule": "lowest whole-recipe-holdout CV MAE; chosen for simulator robustness"
+    },
+    "Bottom_CD_nm": {
+      "family": "RandomForest",
+      "file": "Bottom_CD_nm__RandomForest.joblib",
+      "selection_rule": "lowest whole-recipe-holdout CV MAE; chosen for simulator robustness"
+    },
+    "Depth_A": {
+      "family": "XGBoost",
+      "file": "Depth_A__XGBoost.joblib",
+      "selection_rule": "lowest whole-recipe-holdout CV MAE; chosen for simulator robustness"
+    },
+    "Particle_Defect": {
+      "family": "XGBoost",
+      "file": "Particle_Defect__XGBoost.joblib",
+      "selection_rule": "highest whole-recipe-holdout CV average precision, then balanced accuracy",
+      "threshold": 0.5
+    },
+    "Defect_Count": {
+      "family": "RandomForest",
+      "file": "Defect_Count__RandomForest.joblib",
+      "selection_rule": "lowest whole-recipe-holdout wafer-aggregate MAE, then fixed wafer-test MAE"
+    },
+    "Defect_Severity_Score": {
+      "family": "RandomForest",
+      "file": "Defect_Severity_Score__RandomForest.joblib",
+      "selection_rule": "lowest whole-recipe-holdout wafer-aggregate MAE, then fixed wafer-test MAE"
+    },
+    "Top_CD_Spec_Pass": {
+      "family": "XGBoost",
+      "file": "Top_CD_Spec_Pass__XGBoost.joblib",
+      "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+      "threshold": 0.5
+    },
+    "Mid_CD_Spec_Pass": {
+      "family": "RandomForest",
+      "file": "Mid_CD_Spec_Pass__RandomForest.joblib",
+      "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+      "threshold": 0.5
+    },
+    "Bottom_CD_Spec_Pass": {
+      "family": "RandomForest",
+      "file": "Bottom_CD_Spec_Pass__RandomForest.joblib",
+      "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+      "threshold": 0.5
+    },
+    "Depth_Spec_Pass": {
+      "family": "XGBoost",
+      "file": "Depth_Spec_Pass__XGBoost.joblib",
+      "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+      "threshold": 0.5
+    }
+  },
+  "base_recipe": {
+    "S1_Time_s": 25.0,
+    "S1_CHF3_sccm": 40.0,
+    "S1_C4F8_sccm": 22.0,
+    "S1_RF_Bias_W": 180.0,
+    "S1_Pressure_mT": 25.0,
+    "S1_O2_sccm": 6.5,
+    "S2_Time_s": 50.0,
+    "S2_HBr_sccm": 100.0,
+    "S2_Cl2_sccm": 82.0,
+    "S2_RF_Bias_W": 140.0,
+    "S2_Pressure_mT": 38.0,
+    "S2_O2_sccm": 9.0
+  },
+  "optimal_recipe": {
+    "S1_Time_s": 28.0,
+    "S1_CHF3_sccm": 45.0,
+    "S1_C4F8_sccm": 15.0,
+    "S1_RF_Bias_W": 220.0,
+    "S1_Pressure_mT": 18.0,
+    "S1_O2_sccm": 4.0,
+    "S2_Time_s": 55.0,
+    "S2_HBr_sccm": 120.0,
+    "S2_Cl2_sccm": 60.0,
+    "S2_RF_Bias_W": 180.0,
+    "S2_Pressure_mT": 30.0,
+    "S2_O2_sccm": 6.0
+  },
+  "recipe_versions": {
+    "Base": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 40.0,
+      "S1_C4F8_sccm": 22.0,
+      "S1_RF_Bias_W": 180.0,
+      "S1_Pressure_mT": 25.0,
+      "S1_O2_sccm": 6.5,
+      "S2_Time_s": 50.0,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 140.0,
+      "S2_Pressure_mT": 38.0,
+      "S2_O2_sccm": 9.0
+    },
+    "Rev1": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 40.0,
+      "S1_C4F8_sccm": 22.0,
+      "S1_RF_Bias_W": 180.0,
+      "S1_Pressure_mT": 25.0,
+      "S1_O2_sccm": 6.5,
+      "S2_Time_s": 50.0,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 9.0
+    },
+    "Rev2": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 40.0,
+      "S1_C4F8_sccm": 22.0,
+      "S1_RF_Bias_W": 180.0,
+      "S1_Pressure_mT": 25.0,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 50.0,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 7.2
+    },
+    "Rev3": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 180.0,
+      "S1_Pressure_mT": 25.0,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 50.0,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 7.2
+    },
+    "Rev4": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 180.0,
+      "S1_Pressure_mT": 20.45,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 50.0,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 7.2
+    },
+    "Rev5": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 180.0,
+      "S1_Pressure_mT": 20.45,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 7.2
+    },
+    "Rev6": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 20.45,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 7.2
+    },
+    "Rev7": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 20.45,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 100.0,
+      "S2_Cl2_sccm": 82.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev8": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 20.45,
+      "S1_O2_sccm": 5.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev9": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 20.45,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 32.8,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev10": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 18.0,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 166.0,
+      "S2_Pressure_mT": 30.0,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev11": {
+      "S1_Time_s": 25.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 18.0,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 53.5,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 180.0,
+      "S2_Pressure_mT": 30.0,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev12": {
+      "S1_Time_s": 28.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 206.0,
+      "S1_Pressure_mT": 18.0,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 55.0,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 180.0,
+      "S2_Pressure_mT": 30.0,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev13": {
+      "S1_Time_s": 28.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 17.1,
+      "S1_RF_Bias_W": 220.0,
+      "S1_Pressure_mT": 18.0,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 55.0,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 180.0,
+      "S2_Pressure_mT": 30.0,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev14": {
+      "S1_Time_s": 28.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 15.0,
+      "S1_RF_Bias_W": 220.0,
+      "S1_Pressure_mT": 18.0,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 55.0,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 180.0,
+      "S2_Pressure_mT": 30.0,
+      "S2_O2_sccm": 6.0
+    },
+    "Rev15": {
+      "S1_Time_s": 28.0,
+      "S1_CHF3_sccm": 45.0,
+      "S1_C4F8_sccm": 15.0,
+      "S1_RF_Bias_W": 220.0,
+      "S1_Pressure_mT": 18.0,
+      "S1_O2_sccm": 4.0,
+      "S2_Time_s": 55.0,
+      "S2_HBr_sccm": 120.0,
+      "S2_Cl2_sccm": 60.0,
+      "S2_RF_Bias_W": 180.0,
+      "S2_Pressure_mT": 30.0,
+      "S2_O2_sccm": 6.0
+    }
+  },
+  "parameter_ranges": {
+    "S1_Time_s": [
+      25.0,
+      28.0
+    ],
+    "S1_CHF3_sccm": [
+      40.0,
+      45.0
+    ],
+    "S1_C4F8_sccm": [
+      15.0,
+      22.0
+    ],
+    "S1_RF_Bias_W": [
+      180.0,
+      220.0
+    ],
+    "S1_Pressure_mT": [
+      18.0,
+      25.0
+    ],
+    "S1_O2_sccm": [
+      4.0,
+      6.5
+    ],
+    "S2_Time_s": [
+      50.0,
+      55.0
+    ],
+    "S2_HBr_sccm": [
+      100.0,
+      120.0
+    ],
+    "S2_Cl2_sccm": [
+      60.0,
+      82.0
+    ],
+    "S2_RF_Bias_W": [
+      140.0,
+      180.0
+    ],
+    "S2_Pressure_mT": [
+      30.0,
+      38.0
+    ],
+    "S2_O2_sccm": [
+      6.0,
+      9.0
+    ]
+  },
+  "parameter_steps": {
+    "S1_Time_s": 3.0,
+    "S1_CHF3_sccm": 5.0,
+    "S1_C4F8_sccm": 2.1000000000000014,
+    "S1_RF_Bias_W": 14.0,
+    "S1_Pressure_mT": 2.4499999999999993,
+    "S1_O2_sccm": 1.0,
+    "S2_Time_s": 1.5,
+    "S2_HBr_sccm": 20.0,
+    "S2_Cl2_sccm": 22.0,
+    "S2_RF_Bias_W": 14.0,
+    "S2_Pressure_mT": 2.799999999999997,
+    "S2_O2_sccm": 1.2000000000000002
+  },
+  "equipment_models": [
+    "AMAT-CENTRIS",
+    "LAM-2300FLEX"
+  ],
+  "chambers": [
+    "CH-A",
+    "CH-B",
+    "CH-C",
+    "CH-D"
+  ],
+  "site_template": [
+    {
+      "Site_ID": "C1",
+      "Zone": "Center",
+      "Radius_frac": 0.0,
+      "Angle_deg": null
+    },
+    {
+      "Site_ID": "Edge-01",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 0.0
+    },
+    {
+      "Site_ID": "Edge-02",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 36.0
+    },
+    {
+      "Site_ID": "Edge-03",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 72.0
+    },
+    {
+      "Site_ID": "Edge-04",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 108.0
+    },
+    {
+      "Site_ID": "Edge-05",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 144.0
+    },
+    {
+      "Site_ID": "Edge-06",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 180.0
+    },
+    {
+      "Site_ID": "Edge-07",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 216.0
+    },
+    {
+      "Site_ID": "Edge-08",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 252.0
+    },
+    {
+      "Site_ID": "Edge-09",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 288.0
+    },
+    {
+      "Site_ID": "Edge-10",
+      "Zone": "Edge",
+      "Radius_frac": 0.85,
+      "Angle_deg": 324.0
+    },
+    {
+      "Site_ID": "ExtEdge-01",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 18.0
+    },
+    {
+      "Site_ID": "ExtEdge-02",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 54.0
+    },
+    {
+      "Site_ID": "ExtEdge-03",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 90.0
+    },
+    {
+      "Site_ID": "ExtEdge-04",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 126.0
+    },
+    {
+      "Site_ID": "ExtEdge-05",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 162.0
+    },
+    {
+      "Site_ID": "ExtEdge-06",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 198.0
+    },
+    {
+      "Site_ID": "ExtEdge-07",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 234.0
+    },
+    {
+      "Site_ID": "ExtEdge-08",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 270.0
+    },
+    {
+      "Site_ID": "ExtEdge-09",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 306.0
+    },
+    {
+      "Site_ID": "ExtEdge-10",
+      "Zone": "Extreme Edge",
+      "Radius_frac": 0.97,
+      "Angle_deg": 342.0
+    },
+    {
+      "Site_ID": "Mid-Bottom",
+      "Zone": "Mid",
+      "Radius_frac": 0.55,
+      "Angle_deg": 270.0
+    },
+    {
+      "Site_ID": "Mid-Left",
+      "Zone": "Mid",
+      "Radius_frac": 0.55,
+      "Angle_deg": 180.0
+    },
+    {
+      "Site_ID": "Mid-Right",
+      "Zone": "Mid",
+      "Radius_frac": 0.55,
+      "Angle_deg": 0.0
+    },
+    {
+      "Site_ID": "Mid-Top",
+      "Zone": "Mid",
+      "Radius_frac": 0.55,
+      "Angle_deg": 90.0
+    }
+  ],
+  "empirical_spec_limits": {
+    "Top_CD_nm": {
+      "lower": null,
+      "upper": 42.0,
+      "note": "Lower failure boundary is not identifiable from observed rows."
+    },
+    "Mid_CD_nm": {
+      "lower": null,
+      "upper": 40.95,
+      "note": "Lower failure boundary is not identifiable from observed rows."
+    },
+    "Bottom_CD_nm": {
+      "lower": 34.23,
+      "upper": 37.8,
+      "note": "Empirical pass envelope, not an engineering-authorized specification."
+    },
+    "Depth_A": {
+      "lower": 1520.0,
+      "upper": 1679.9,
+      "note": "Empirical pass envelope, not an engineering-authorized specification."
+    }
+  },
+  "score_formula": "round(mean_p(100 * (1 - abs(x_p - Rev15_p) / abs(Base_p - Rev15_p))), 1)",
+  "simulator_quality_index": "relative-quality-v3 core = 0.60*mean direct predicted spec-pass probability + 0.20*Base-to-Rev15 defect-count score + 0.20*Base-to-Rev15 severity score; final = 0.85*wafer core + 0.15*worst-zone core; this is not a production pass probability",
+  "limitations": [
+    "Only 16 highly correlated recipe combinations are observed.",
+    "Process and Layer columns are absent and therefore are not model features.",
+    "Group split prevents same-wafer leakage but does not test unseen recipe-version generalization.",
+    "Feature importance is associative, not causal, because recipe parameters changed sequentially and are collinear.",
+    "Empirical spec limits are inferred from pass flags and are not a substitute for engineering-controlled specifications.",
+    "Quality-v2 defect normalization uses observed Base and Rev15 averages because official defect-count and severity acceptance limits were not supplied."
+  ],
+  "training_seconds": 96.4,
+  "wafer_group_cv_selected_models": {
+    "Top_CD_nm": {
+      "family": "XGBoost",
+      "file": "Top_CD_nm__XGBoost.joblib",
+      "selection_rule": "lowest grouped-CV MAE on training wafers"
+    },
+    "Mid_CD_nm": {
+      "family": "XGBoost",
+      "file": "Mid_CD_nm__XGBoost.joblib",
+      "selection_rule": "lowest grouped-CV MAE on training wafers"
+    },
+    "Bottom_CD_nm": {
+      "family": "XGBoost",
+      "file": "Bottom_CD_nm__XGBoost.joblib",
+      "selection_rule": "lowest grouped-CV MAE on training wafers"
+    },
+    "Depth_A": {
+      "family": "MLP",
+      "file": "Depth_A__MLP.joblib",
+      "selection_rule": "lowest grouped-CV MAE on training wafers"
+    },
+    "Particle_Defect": {
+      "family": "XGBoost",
+      "file": "Particle_Defect__XGBoost.joblib",
+      "selection_rule": "highest grouped-CV average precision, then balanced accuracy",
+      "threshold": 0.5
+    }
+  },
+  "deployment_selection_note": "Deployment favors whole-recipe holdout robustness over the easier wafer-only CV. MLP is retained for comparison but excluded from simulator deployment because recipe-holdout performance collapsed.",
+  "tool_support": {
+    "total_training_wafers": 244,
+    "valid_pairs": [
+      {
+        "equipment_model": "AMAT-CENTRIS",
+        "chamber_id": "CH-C",
+        "wafer_count": 47
+      },
+      {
+        "equipment_model": "AMAT-CENTRIS",
+        "chamber_id": "CH-D",
+        "wafer_count": 64
+      },
+      {
+        "equipment_model": "LAM-2300FLEX",
+        "chamber_id": "CH-A",
+        "wafer_count": 80
+      },
+      {
+        "equipment_model": "LAM-2300FLEX",
+        "chamber_id": "CH-B",
+        "wafer_count": 53
+      }
+    ],
+    "recipe_pair_wafer_counts": {
+      "Base": {
+        "AMAT-CENTRIS": {
+          "CH-C": 2,
+          "CH-D": 5
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 7,
+          "CH-B": 3
+        }
+      },
+      "Rev1": {
+        "AMAT-CENTRIS": {
+          "CH-C": 2,
+          "CH-D": 6
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 5,
+          "CH-B": 1
+        }
+      },
+      "Rev2": {
+        "AMAT-CENTRIS": {
+          "CH-C": 1,
+          "CH-D": 2
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 6,
+          "CH-B": 4
+        }
+      },
+      "Rev3": {
+        "AMAT-CENTRIS": {
+          "CH-C": 4,
+          "CH-D": 6
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 2,
+          "CH-B": 3
+        }
+      },
+      "Rev4": {
+        "AMAT-CENTRIS": {
+          "CH-C": 1,
+          "CH-D": 2
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 5,
+          "CH-B": 4
+        }
+      },
+      "Rev5": {
+        "AMAT-CENTRIS": {
+          "CH-C": 5,
+          "CH-D": 1
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 6,
+          "CH-B": 4
+        }
+      },
+      "Rev6": {
+        "AMAT-CENTRIS": {
+          "CH-C": 2,
+          "CH-D": 1
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 10,
+          "CH-B": 5
+        }
+      },
+      "Rev7": {
+        "AMAT-CENTRIS": {
+          "CH-C": 5,
+          "CH-D": 6
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 5,
+          "CH-B": 2
+        }
+      },
+      "Rev8": {
+        "AMAT-CENTRIS": {
+          "CH-C": 3,
+          "CH-D": 2
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 3,
+          "CH-B": 4
+        }
+      },
+      "Rev9": {
+        "AMAT-CENTRIS": {
+          "CH-C": 5,
+          "CH-D": 6
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 2,
+          "CH-B": 4
+        }
+      },
+      "Rev10": {
+        "AMAT-CENTRIS": {
+          "CH-C": 4,
+          "CH-D": 2
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 3,
+          "CH-B": 4
+        }
+      },
+      "Rev11": {
+        "AMAT-CENTRIS": {
+          "CH-C": 2,
+          "CH-D": 5
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 5,
+          "CH-B": 5
+        }
+      },
+      "Rev12": {
+        "AMAT-CENTRIS": {
+          "CH-C": 3,
+          "CH-D": 4
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 6,
+          "CH-B": 3
+        }
+      },
+      "Rev13": {
+        "AMAT-CENTRIS": {
+          "CH-C": 1,
+          "CH-D": 9
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 5,
+          "CH-B": 1
+        }
+      },
+      "Rev14": {
+        "AMAT-CENTRIS": {
+          "CH-C": 2,
+          "CH-D": 4
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 7,
+          "CH-B": 4
+        }
+      },
+      "Rev15": {
+        "AMAT-CENTRIS": {
+          "CH-C": 5,
+          "CH-D": 3
+        },
+        "LAM-2300FLEX": {
+          "CH-A": 3,
+          "CH-B": 2
+        }
+      }
+    }
+  },
+  "quality_score_version": 3,
+  "quality_v2": {
+    "spec_pass_targets": [
+      "Top_CD_Spec_Pass",
+      "Mid_CD_Spec_Pass",
+      "Bottom_CD_Spec_Pass",
+      "Depth_Spec_Pass"
+    ],
+    "defect_regression_targets": [
+      "Defect_Count",
+      "Defect_Severity_Score"
+    ],
+    "selected_models": {
+      "Defect_Count": {
+        "family": "RandomForest",
+        "file": "Defect_Count__RandomForest.joblib",
+        "selection_rule": "lowest whole-recipe-holdout wafer-aggregate MAE, then fixed wafer-test MAE"
+      },
+      "Defect_Severity_Score": {
+        "family": "RandomForest",
+        "file": "Defect_Severity_Score__RandomForest.joblib",
+        "selection_rule": "lowest whole-recipe-holdout wafer-aggregate MAE, then fixed wafer-test MAE"
+      },
+      "Top_CD_Spec_Pass": {
+        "family": "XGBoost",
+        "file": "Top_CD_Spec_Pass__XGBoost.joblib",
+        "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+        "threshold": 0.5
+      },
+      "Mid_CD_Spec_Pass": {
+        "family": "RandomForest",
+        "file": "Mid_CD_Spec_Pass__RandomForest.joblib",
+        "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+        "threshold": 0.5
+      },
+      "Bottom_CD_Spec_Pass": {
+        "family": "RandomForest",
+        "file": "Bottom_CD_Spec_Pass__RandomForest.joblib",
+        "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+        "threshold": 0.5
+      },
+      "Depth_Spec_Pass": {
+        "family": "XGBoost",
+        "file": "Depth_Spec_Pass__XGBoost.joblib",
+        "selection_rule": "highest whole-recipe-holdout balanced accuracy, then ROC-AUC",
+        "threshold": 0.5
+      }
+    },
+    "defect_score_reference": {
+      "overall": {
+        "base_total_defect_count": 11.470588235294118,
+        "optimal_total_defect_count": 1.1538461538461537,
+        "base_mean_defect_severity": 3.655529411764706,
+        "optimal_mean_defect_severity": 0.072
+      },
+      "zones": {
+        "Center": {
+          "base_total_defect_count": 0.17647058823529413,
+          "optimal_total_defect_count": 0.07692307692307693,
+          "base_mean_defect_severity": 1.168235294117647,
+          "optimal_mean_defect_severity": 0.1
+        },
+        "Edge": {
+          "base_total_defect_count": 4.0,
+          "optimal_total_defect_count": 0.6153846153846154,
+          "base_mean_defect_severity": 3.2851176470588235,
+          "optimal_mean_defect_severity": 0.10215384615384616
+        },
+        "Extreme Edge": {
+          "base_total_defect_count": 4.764705882352941,
+          "optimal_total_defect_count": 0.38461538461538464,
+          "base_mean_defect_severity": 3.9190000000000005,
+          "optimal_mean_defect_severity": 0.06123076923076923
+        },
+        "Mid": {
+          "base_total_defect_count": 2.5294117647058822,
+          "optimal_total_defect_count": 0.07692307692307693,
+          "base_mean_defect_severity": 4.544705882352941,
+          "optimal_mean_defect_severity": 0.016538461538461537
+        }
+      }
+    },
+    "weights": {
+      "spec_pass": 0.6,
+      "defect_count": 0.2,
+      "defect_severity": 0.2,
+      "wafer_core": 0.85,
+      "worst_zone_guardrail": 0.15
+    },
+    "quality_formula": "relative-quality-v3 core = 0.60*mean direct predicted spec-pass probability + 0.20*Base-to-Rev15 defect-count score + 0.20*Base-to-Rev15 severity score; final = 0.85*wafer core + 0.15*worst-zone core; this is not a production pass probability",
+    "target_note": "Defect references are observed Base and Rev15 averages, not engineering-authorized acceptance limits. Site_ID is a location key; Zone, radius, and angle are model features.",
+    "training_seconds": 100.5,
+    "defect_validation_grain": "Defect_Count is summed per 25-site wafer; Defect_Severity_Score is averaged per wafer. Deployment selection uses whole-recipe-holdout wafer-aggregate MAE."
+  }
+}
