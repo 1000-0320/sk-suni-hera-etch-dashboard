@@ -172,7 +172,7 @@ def generate_priority_issues(result: dict, targets: dict, errors: dict, satisfie
         target_key = {"Top CD": "target_top_cd", "Mid CD": "target_mid_cd",
                       "Bottom CD": "target_bottom_cd", "Depth": "target_depth"}[name]
         target_value = targets[target_key]
-        severity = abs(error) / abs(target_value) if target_value else 0
+        severity = abs(error) / abs(target_value) if target_value else (1.0 if error != 0 else 0.0)
         if severity > 0.01:  # 1% 이상 벗어난 경우만 이슈로 취급
             direction = "큼" if error > 0 else "부족"
             unit = "nm"
