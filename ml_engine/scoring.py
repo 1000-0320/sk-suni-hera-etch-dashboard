@@ -7,6 +7,8 @@ model.py -> ml_engine.isolation_core 방향의 기존 import와 순환되지 않
 
 
 def _clip(value, lo=0.0, hi=100.0):
+    if value != value:  # NaN (결측 실측치) -> 만점으로 둔갑하는 대신 최하점 처리
+        return lo
     return max(lo, min(hi, value))
 
 
