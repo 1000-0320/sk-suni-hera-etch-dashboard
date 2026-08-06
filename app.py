@@ -463,11 +463,7 @@ def show_comparison(current_result: dict, current_score: dict, recommendation: d
 # ==============================================================================
 def show_parameter_recommendations(suggestion: dict):
     st.markdown("<div class='section-title'>파라미터별 조정 제안 (AI 추천)</div>", unsafe_allow_html=True)
-    st.caption(
-        "기존 Recipe 중에서 고르는 게 아니라, 지금 입력한 조건을 그대로 출발점 삼아 "
-        "파라미터를 하나씩 바꿔보면서 위에서 설정한 목표 품질에 가장 가까워지는 방향을 찾은 결과입니다. "
-        "실제로 관측된 값 범위 안에서만 탐색하므로, 한 번도 시도되지 않은 값은 제안하지 않습니다."
-    )
+    st.caption("지금 입력한 조건을 출발점으로, 파라미터를 하나씩 바꿔가며 목표 품질에 가장 가까워지는 방향을 찾았습니다 (관측된 값 범위 내에서만 탐색).")
 
     if suggestion is None:
         return
@@ -492,9 +488,8 @@ def show_parameter_recommendations(suggestion: dict):
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.caption(
-        f"현재 조건의 목표 대비 종합 점수 {suggestion['baseline_target_score_pct']:.1f}점에서 출발한 결과이며, "
-        "One-Factor-at-a-Time(한 번에 파라미터 하나씩) 방식으로 탐색한 것입니다. "
-        "인과관계를 증명한 것은 아니며, 실제 적용 전 검증이 필요합니다."
+        f"출발점 점수 {suggestion['baseline_target_score_pct']:.1f}점 · "
+        "One-Factor-at-a-Time(파라미터 하나씩 변경) 스크리닝 · 실제 적용 전 검증 필요"
     )
 
 
