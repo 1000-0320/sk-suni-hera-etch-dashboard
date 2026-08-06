@@ -44,10 +44,12 @@ def _recipe_from_inputs(inputs: dict, param_columns: list) -> dict:
 # ==============================================================================
 # 1. predict() - Recipe 조건 -> 예상 품질 결과 (실제 ML 모델 호출)
 # ==============================================================================
-def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process: str = "trench") -> dict:
+def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process: str = "trench",
+            allow_out_of_range: bool = False) -> dict:
     """
     Stage별 Time/RF Bias/Pressure/Gas Flow가 담긴 inputs dict를 실제 학습된 모델에 넣어
     Recipe 예상 품질을 반환한다. Equipment/Chamber는 학습 데이터에서 실제 관측된 조합만 허용된다.
+    파라미터가 학습 range를 벗어나면 기본적으로 예측을 막는다 (allow_out_of_range=True면 경고만 남기고 실행).
     """
     core = _CORES[process]
     model_dir = _MODEL_DIRS[process]
@@ -57,7 +59,14 @@ def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process:
     recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
 
     try:
-        raw = core.predict_wafer(recipe, equipment, chamber, model_dir=model_dir)
+        raw = core.predict_wafer(recipe, equipment, chamber, model_dir=model_dir, allow_out_of_range=allow_out_of_range)
+    except core.OutOfRangeError as exc:
+        return {
+            "Top CD": None, "Mid CD": None, "Bottom CD": None, "Depth": None,
+            "CD Uniformity": None, "Depth Uniformity": None, "Overall Spec Pass Rate": None,
+            "Particle": False, "Defect Count": None, "Particle Probability": None,
+            "_source_wafer_count": 0, "_error": str(exc), "_out_of_range": True,
+        }
     except ValueError as exc:
         # 학습 데이터에 없는 Equipment/Chamber 조합 등 - 화면에 그대로 노출할 수 있도록 반환
         return {
@@ -281,7 +290,8 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
     return messages
 
 
-def recommend_parameter_adjustments(inputs: dict, process: str = "trench", top_n: int = 5) -> dict:
+def recommend_parameter_adjustments(inputs: dict, process: str = "trench", top_n: int = 5,
+                                     allow_out_of_range: bool = False) -> dict:
     """현재 화면에 입력된 (기존 Recipe가 아닌) Custom 값을 출발점으로,
     파라미터를 하나씩 바꿔가며(One-Factor-at-a-Time) 관측된 값들 중 품질이 가장 좋아지는
     방향을 찾는다. Recipe 단위 추천(recommend_best_recipe)과 달리 파라미터 단위 제안이다."""
@@ -291,7 +301,10 @@ def recommend_parameter_adjustments(inputs: dict, process: str = "trench", top_n
     chamber = inputs.get("chamber")
     recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
     try:
-        return core.recommend_parameter_changes(recipe, equipment, chamber, model_dir=model_dir, top_n=top_n)
+        return core.recommend_parameter_changes(
+            recipe, equipment, chamber, model_dir=model_dir, top_n=top_n,
+            allow_out_of_range=allow_out_of_range,
+        )
     except ValueError as exc:
         return {"error": str(exc)}
 

@@ -82,6 +82,32 @@ def validate_tool_pair(
         )
 
 
+class OutOfRangeError(ValueError):
+    """Recipe 파라미터가 학습 데이터 관측 범위를 벗어났을 때 발생 (allow_out_of_range=True로 우회 가능)."""
+
+
+def validate_parameter_ranges(
+    recipe: dict[str, float], metadata: dict[str, Any], allow_out_of_range: bool = False
+) -> list[str]:
+    """학습 데이터 범위를 벗어난 입력값을 찾는다.
+
+    기본은 하나라도 벗어나면 OutOfRangeError를 던져 예측을 시작하기 전에 막는다.
+    allow_out_of_range=True면 막지 않고 벗어난 항목 목록만 반환한다 (호출부에서 경고로 표시).
+    """
+    violations = []
+    for parameter in PARAMETER_COLUMNS:
+        lower, upper = metadata["parameter_ranges"][parameter]
+        value = float(recipe[parameter])
+        if value < lower or value > upper:
+            violations.append(f"{parameter}={value:g} (허용 범위: {lower:g} - {upper:g})")
+    if violations and not allow_out_of_range:
+        raise OutOfRangeError(
+            "학습 데이터 범위를 벗어난 입력값이 있어 예측을 실행하지 않았습니다: "
+            + "; ".join(violations)
+        )
+    return violations
+
+
 def recipe_tool_support_count(
     recipe_version: str,
     equipment_model: str,
@@ -198,10 +224,12 @@ def predict_wafer(
     process: str = "Isolation Etch",
     layer: str = "Dataset scope (unspecified layer)",
     model_dir: str | Path | None = None,
+    allow_out_of_range: bool = False,
 ) -> dict[str, Any]:
     directory = _resolve_model_dir(model_dir)
     metadata = load_metadata(str(directory))
     validate_tool_pair(equipment_model, chamber_id, metadata)
+    range_violations = validate_parameter_ranges(recipe, metadata, allow_out_of_range=allow_out_of_range)
     frame = _site_input_frame(recipe, equipment_model, chamber_id, metadata)
 
     site_predictions: dict[str, np.ndarray] = {}
@@ -361,11 +389,11 @@ def predict_wafer(
     warnings = []
     if process != "Isolation Etch" or layer != "Dataset scope (unspecified layer)":
         warnings.append("Process and Layer are metadata only because the source data has no Process/Layer columns.")
-    for parameter in PARAMETER_COLUMNS:
-        lower, upper = metadata["parameter_ranges"][parameter]
-        value = float(recipe[parameter])
-        if value < lower or value > upper:
-            warnings.append(f"{parameter}={value:g} is outside the observed training range [{lower:g}, {upper:g}].")
+    if range_violations:
+        warnings.append(
+            "학습 range를 벗어난 입력값으로 예측했습니다 (신뢰도 낮음, 값이 클수록 예측이 평평해질 수 있음): "
+            + "; ".join(range_violations)
+        )
 
     site_rows = []
     template = metadata["site_template"]
@@ -592,6 +620,7 @@ def recommend_parameter_changes(
     layer: str = "Dataset scope (unspecified layer)",
     model_dir: str | Path | None = None,
     top_n: int = 5,
+    allow_out_of_range: bool = False,
 ) -> dict[str, Any]:
     directory = _resolve_model_dir(model_dir)
     metadata = load_metadata(str(directory))
@@ -602,6 +631,7 @@ def recommend_parameter_changes(
         process=process,
         layer=layer,
         model_dir=directory,
+        allow_out_of_range=allow_out_of_range,
     )
     baseline_quality = float(baseline["predicted_quality_index_pct"])
     baseline_closure = float(baseline["parameter_closure_to_rev15_pct"])

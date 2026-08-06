@@ -653,8 +653,11 @@ def main():
         workbook = get_active_workbook()
         inputs, targets, submitted = create_input_panel()
 
-        if submitted:
-            result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process)
+        def _run_prediction(allow_out_of_range: bool = False):
+            result = predict(
+                inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"],
+                process=process, allow_out_of_range=allow_out_of_range,
+            )
             evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
             recommendation = None
             param_suggestions = None
@@ -662,7 +665,9 @@ def main():
                 recommendation = recommend_best_recipe(
                     inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
                 )
-                param_suggestions = recommend_parameter_adjustments(inputs, process=process)
+                param_suggestions = recommend_parameter_adjustments(
+                    inputs, process=process, allow_out_of_range=allow_out_of_range,
+                )
 
             st.session_state.prediction_result = result
             st.session_state.prediction_inputs = inputs
@@ -671,25 +676,37 @@ def main():
             st.session_state.prediction_recommendation = recommendation
             st.session_state.prediction_param_suggestions = param_suggestions
 
-        if st.session_state.prediction_result is not None:
-            st.markdown("---")
-            show_prediction(st.session_state.prediction_result)
-            if not st.session_state.prediction_result.get("_error"):
+        if submitted:
+            _run_prediction(allow_out_of_range=False)
+
+        result = st.session_state.prediction_result
+        if result is not None:
+            if result.get("_out_of_range"):
                 st.markdown("---")
-                show_target_evaluation(st.session_state.prediction_evaluation)
+                st.warning(f"⚠️ {result['_error']}")
+                st.caption("학습 데이터 밖의 값이라 예측 신뢰도가 떨어질 수 있습니다. 그래도 이 값으로 결과를 보고 싶다면 아래 버튼을 누르세요.")
+                if st.button("그래도 이 값으로 실행", key="force_out_of_range_run"):
+                    _run_prediction(allow_out_of_range=True)
+                    st.rerun()
+            else:
                 st.markdown("---")
-                show_recommendation(
-                    st.session_state.prediction_inputs, st.session_state.prediction_recommendation,
-                    workbook["Recipe_Master"], stage_defs,
-                )
-                st.markdown("---")
-                show_comparison(
-                    st.session_state.prediction_result,
-                    st.session_state.prediction_evaluation["score"],
-                    st.session_state.prediction_recommendation,
-                )
-                st.markdown("---")
-                show_parameter_recommendations(st.session_state.prediction_param_suggestions)
+                show_prediction(result)
+                if not result.get("_error"):
+                    st.markdown("---")
+                    show_target_evaluation(st.session_state.prediction_evaluation)
+                    st.markdown("---")
+                    show_recommendation(
+                        st.session_state.prediction_inputs, st.session_state.prediction_recommendation,
+                        workbook["Recipe_Master"], stage_defs,
+                    )
+                    st.markdown("---")
+                    show_comparison(
+                        st.session_state.prediction_result,
+                        st.session_state.prediction_evaluation["score"],
+                        st.session_state.prediction_recommendation,
+                    )
+                    st.markdown("---")
+                    show_parameter_recommendations(st.session_state.prediction_param_suggestions)
         else:
             st.info("공정 조건과 목표 품질을 입력하고 '예측 · 평가 · 추천 실행' 버튼을 눌러주세요.")
 
