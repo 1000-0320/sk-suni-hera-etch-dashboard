@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from style import COLORS
-from data_utils import PARTICLE_DEFECT_THRESHOLD
+from data_utils import PARTICLE_DEFECT_THRESHOLD, ZONE_ORDER
 
 _FONT = dict(family="Pretendard, -apple-system, Segoe UI, sans-serif", color=COLORS["text_primary"])
 
@@ -236,6 +236,62 @@ def build_wafer_map(filtered_site_df, value_col: str, value_label: str):
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
         margin=dict(t=50, b=10, l=10, r=10), height=460,
     )
+    return fig
+
+
+def build_wafer_profile_chart(filtered_site_df, value_col: str, value_label: str):
+    """Wafer 단면 Profile: x축 = Point 번호, Edge → Center → Edge 순으로 배치해
+    같은 반경대끼리 값이 얼마나 흩어져 있는지 한눈에 읽기 쉽게 만든다 (2D Wafer Map의 가독성 보완용)."""
+    agg = (
+        filtered_site_df.groupby(["Site_ID", "Zone", "Radius_frac", "Angle_deg"], dropna=False)[value_col]
+        .mean()
+        .reset_index()
+    )
+    zone_rank = {z: i for i, z in enumerate(ZONE_ORDER)}
+    agg["_zone_rank"] = agg["Zone"].map(zone_rank).fillna(len(ZONE_ORDER))
+    agg["_angle_sort"] = agg["Angle_deg"].fillna(-1)
+
+    center = agg[agg["Zone"] == "Center"].sort_values("_angle_sort")
+    outer = agg[agg["Zone"] != "Center"].sort_values(["_zone_rank", "_angle_sort"], ascending=[False, True])
+
+    ordered = pd.concat([outer, center, outer.iloc[::-1]], ignore_index=True)
+    ordered["Point"] = range(1, len(ordered) + 1)
+
+    colors = [COLORS["critical"] if z == "Center" else COLORS["series1"] for z in ordered["Zone"]]
+    fig = go.Figure(go.Scatter(
+        x=ordered["Point"], y=ordered[value_col], mode="lines+markers",
+        line=dict(color=COLORS["series1"], width=2),
+        marker=dict(size=8, color=colors),
+        text=ordered["Zone"], hoverinfo="x+y+text",
+    ))
+    if not center.empty:
+        center_point = ordered.loc[ordered["Zone"] == "Center", "Point"].mean()
+        fig.add_vline(x=center_point, line_dash="dash", line_color=COLORS["muted"], annotation_text="Center")
+    fig.update_layout(
+        title=f"Wafer 단면 Profile — {value_label} (Edge → Center → Edge)",
+        xaxis_title="Point #", yaxis_title=value_label,
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=40, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"])
+    fig.update_xaxes(showgrid=False, dtick=1)
+    return fig
+
+
+def build_recipe_score_chart(scoreboard_df: pd.DataFrame):
+    """Recipe(Rev)별 종합 품질 점수 막대그래프 — 실측 데이터 기반, 점수 높은 순 정렬."""
+    colors = _status_colors_for_values(scoreboard_df["종합 점수"], warn_th=50, good_th=80)
+    fig = go.Figure(go.Bar(
+        x=scoreboard_df["Recipe"], y=scoreboard_df["종합 점수"], marker_color=colors,
+        text=[f"{v:.1f}" for v in scoreboard_df["종합 점수"]], textposition="outside",
+    ))
+    fig.update_layout(
+        title="Recipe(Rev)별 종합 품질 점수 (실측 기반)", yaxis_title="종합 점수",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=60, l=30, r=20), height=360, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 105])
+    fig.update_xaxes(showgrid=False, tickangle=-45)
     return fig
 
 

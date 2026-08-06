@@ -9,6 +9,8 @@ compute_composite_score() / evaluate_against_target() / recommend_best_recipe()�
 predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 (모델 교체와 무관).
 """
 
+import pandas as pd
+
 from ml_engine import isolation_core, trench_core
 from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
 
@@ -153,6 +155,38 @@ def compute_composite_score(result: dict, targets: dict) -> dict:
 # ==============================================================================
 # 3. 목표 대비 평가 (Output B)
 # ==============================================================================
+def score_recipe_versions(wafer_df: pd.DataFrame, targets: dict) -> pd.DataFrame:
+    """Wafer_Summary 실측치를 Recipe_Version별로 집계해 종합 품질 점수로 순위를 매긴다.
+
+    모델 예측이 아니라 실제 측정된 Wafer 결과 기반이라, "지금 이 Rev들 중 뭐가 제일 좋았나"를
+    바로 보여줄 수 있다 (대시보드의 Rev별 스코어링 표/차트에 사용).
+    """
+    rows = []
+    for recipe_version, group in wafer_df.groupby("Recipe_Version"):
+        result = {
+            "Top CD": float(group["Top_CD_Mean_nm"].mean()),
+            "Mid CD": float(group["Mid_CD_Mean_nm"].mean()),
+            "Bottom CD": float(group["Bottom_CD_Mean_nm"].mean()),
+            "Depth": float(group["Depth_Mean_nm"].mean()),
+            "CD Uniformity": float(
+                group[["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]].mean().mean()
+            ),
+            "Depth Uniformity": float(group["Depth_Uniformity_pct"].mean()),
+            "Overall Spec Pass Rate": float(group["Overall_Spec_Pass_Rate_pct"].mean()),
+        }
+        score = compute_composite_score(result, targets)
+        rows.append({
+            "Recipe": recipe_version,
+            "종합 점수": score["total"],
+            "Wafer 수": int(group["Wafer_ID"].nunique()) if "Wafer_ID" in group.columns else len(group),
+            **result,
+        })
+    scoreboard = pd.DataFrame(rows)
+    if scoreboard.empty:
+        return scoreboard
+    return scoreboard.sort_values("종합 점수", ascending=False).reset_index(drop=True)
+
+
 def evaluate_against_target(result: dict, targets: dict) -> dict:
     errors = {
         "Top CD": round(result["Top CD"] - targets["target_top_cd"], 1),

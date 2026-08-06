@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from model import (
-    predict, compute_composite_score, evaluate_against_target,
+    predict, compute_composite_score, evaluate_against_target, score_recipe_versions,
     recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
 )
 from data_utils import (
@@ -33,7 +33,7 @@ from charts import (
     build_cd_trend_chart, build_depth_trend_chart,
     build_cd_uniformity_trend_chart, build_depth_uniformity_trend_chart,
     build_pass_rate_trend_chart, build_particle_chart,
-    build_wafer_map,
+    build_wafer_map, build_wafer_profile_chart, build_recipe_score_chart,
     build_zone_cd_chart, build_zone_depth_chart, build_zone_spread_chart,
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
@@ -63,7 +63,8 @@ def init_session_state():
         "prediction_targets": None,
         "prediction_evaluation": None,
         "prediction_recommendation": None,
-        "prediction_param_suggestions": None,
+        "target_mode_baseline": None,
+        "target_mode_suggestion": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -106,6 +107,8 @@ def create_process_selector():
         st.session_state.process = selected
         st.session_state.prediction_result = None
         st.session_state.prediction_recommendation = None
+        st.session_state.target_mode_baseline = None
+        st.session_state.target_mode_suggestion = None
     st.caption("공정을 바꾸면 파라미터 입력창과 예측 모델이 해당 공정 것으로 전환됩니다.")
 
 
@@ -175,39 +178,47 @@ def create_input_panel():
     a3.metric("Step1 Layer", stage_defs[0]["label"])
     a4.metric("마지막 Step Layer", stage_defs[-1]["label"])
 
-    # ---- 장비 및 Chamber 선택 ----
-    st.markdown("<div class='section-title'>장비 및 Chamber 선택</div>", unsafe_allow_html=True)
-    b1, b2, b3 = st.columns(3)
+    # ---- 장비 선택 (Chamber는 자동 대표값 사용 — 멘토 피드백: 모든 Chamber 동일 조건으로 가정) ----
+    st.markdown("<div class='section-title'>장비 선택</div>", unsafe_allow_html=True)
+    b1, b2 = st.columns(2)
     with b1:
         equipment = st.selectbox("Equipment Model", sorted(wafer_df["Equipment_Model"].unique()), key=f"eq_{process}")
-    with b2:
-        chamber_choices = sorted(
-            wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].unique()
-        ) or sorted(wafer_df["Chamber_ID"].unique())
-        chamber = st.selectbox("Chamber ID", chamber_choices, key=f"ch_{process}")
+    chamber_choices = sorted(
+        wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].unique()
+    ) or sorted(wafer_df["Chamber_ID"].unique())
+    chamber = chamber_choices[0]
     recipe_options = ordered_recipe_versions(recipe_df)
-    with b3:
+    with b2:
         recipe = st.selectbox("Recipe (참고용 베이스라인)", recipe_options, key=f"recipe_{process}")
+    st.caption(f"Chamber는 모든 Chamber가 동일하다는 가정으로 대표값(`{chamber}`)을 자동 사용합니다.")
 
     stage_table = get_recipe_stage_table(recipe_df, recipe, stage_defs)
     if not stage_table.empty:
         st.markdown(f"**Recipe '{recipe}' 실제 Stage 조건 (참고용)**")
         st.dataframe(stage_table, use_container_width=True, hide_index=True)
 
-    # ---- 목표 품질 설정 ----
+    # ---- 목표 품질 설정 (참고값 → 목표값 형식 — 멘토 피드백) ----
     st.markdown("<div class='section-title'>목표 품질 설정</div>", unsafe_allow_html=True)
-    st.caption("데이터셋에는 없는 값으로, 평가·추천의 기준이 됩니다. 기본값은 가장 성숙한 Recipe의 실측 평균입니다.")
-    defaults = get_default_targets(wafer_df, recipe_df)
+    st.caption(f"'{recipe}' Recipe의 실측 평균이 참고값입니다. 라벨에 표시된 참고값 → 원하는 목표값만 조정하세요.")
+    defaults = get_default_targets(wafer_df, recipe_df, recipe)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        target_top_cd = st.number_input("Target Top CD (nm)", value=defaults["target_top_cd"], key=f"ttop_{process}")
+        target_top_cd = st.number_input(
+            f"Top CD (nm): {defaults['target_top_cd']:g} → 목표", value=defaults["target_top_cd"], key=f"ttop_{process}_{recipe}",
+        )
     with c2:
-        target_mid_cd = st.number_input("Target Mid CD (nm)", value=defaults["target_mid_cd"], key=f"tmid_{process}")
+        target_mid_cd = st.number_input(
+            f"Mid CD (nm): {defaults['target_mid_cd']:g} → 목표", value=defaults["target_mid_cd"], key=f"tmid_{process}_{recipe}",
+        )
     with c3:
-        target_bottom_cd = st.number_input("Target Bottom CD (nm)", value=defaults["target_bottom_cd"], key=f"tbot_{process}")
+        target_bottom_cd = st.number_input(
+            f"Bottom CD (nm): {defaults['target_bottom_cd']:g} → 목표", value=defaults["target_bottom_cd"], key=f"tbot_{process}_{recipe}",
+        )
     with c4:
-        target_depth = st.number_input("Target Depth (nm)", value=defaults["target_depth"], key=f"tdep_{process}")
+        target_depth = st.number_input(
+            f"Depth (nm): {defaults['target_depth']:g} → 목표", value=defaults["target_depth"], key=f"tdep_{process}_{recipe}",
+        )
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
@@ -226,11 +237,26 @@ def create_input_panel():
         "min_pass_rate": min_pass_rate, "max_defect_count": max_defect_count,
     }
 
+    stage_defaults = stage_inputs_from_recipe(recipe_df, recipe, stage_defs)
+    baseline_inputs = {"equipment": equipment, "chamber": chamber, "recipe": recipe, **stage_defaults}
+
+    # ---- 시뮬레이터 모드 (멘토 피드백: 기능 두 가지를 명확히 분리) ----
+    st.markdown("<div class='section-title'>시뮬레이터 모드</div>", unsafe_allow_html=True)
+    mode_label = st.radio(
+        "무엇을 하고 싶으신가요?",
+        ["🎯 목표 품질 → 레시피 변경점 추천", "🔧 레시피 조건 직접 입력 → 품질 평가"],
+        horizontal=True, key=f"mode_{process}",
+    )
+
+    if mode_label.startswith("🎯"):
+        st.caption("위 Recipe를 출발점으로, 목표 품질에 가까워지려면 파라미터를 어떻게 바꾸면 좋을지 AI가 추천합니다.")
+        run = st.button("🔮 변경점 추천 실행", type="primary", use_container_width=True)
+        return "target", baseline_inputs, targets, run, stage_defs, recipe, workbook
+
     # ---- 현재 공정 조건 입력 (모든 Stage를 한 번에 펼쳐서 표시 — 멘토 피드백 반영) ----
     st.markdown("<div class='section-title'>현재 공정 조건 입력</div>", unsafe_allow_html=True)
     st.caption(f"{PROCESS_LABELS[process]} 전체 {len(stage_defs)}개 Stage를 한 화면에서 바로 확인·수정할 수 있습니다.")
 
-    stage_defaults = stage_inputs_from_recipe(recipe_df, recipe, stage_defs)
     inputs = {"equipment": equipment, "chamber": chamber, "recipe": recipe}
     match = recipe_df[recipe_df["Recipe_Version"] == recipe]
     recipe_row = match.iloc[0] if not match.empty else None
@@ -269,7 +295,7 @@ def create_input_panel():
 
     submitted = st.button("🔮 예측 · 평가 · 추천 실행", type="primary", use_container_width=True)
 
-    return inputs, targets, submitted
+    return "recipe", inputs, targets, submitted, stage_defs, recipe, workbook
 
 
 # ==============================================================================
@@ -503,7 +529,7 @@ def create_process_dashboard_selectors(workbook: dict, process: str):
         & (site_df["Recipe_Version"] == recipe)
     ]
 
-    return filtered_wafer, filtered_site
+    return filtered_wafer, filtered_site, df2
 
 
 def show_process_summary(filtered_wafer: pd.DataFrame):
@@ -543,6 +569,26 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
     for col, (label, value) in zip(row2, row2_items):
         with col:
             render_summary_card(label, value)
+
+
+# ==============================================================================
+# 2-3. Rev별 스코어링 순위 (멘토 피드백: 현재 어떤 레시피가 가장 좋은지 바로 알 수 있게)
+# ==============================================================================
+def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict):
+    st.markdown("### 🏆 Rev별 스코어링 순위")
+    st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
+    if equipment_chamber_wafer.empty:
+        st.info("선택한 조건에 해당하는 데이터가 없습니다.")
+        return
+
+    scoreboard = score_recipe_versions(equipment_chamber_wafer, targets)
+    if scoreboard.empty:
+        st.info("Rev 스코어를 계산할 데이터가 없습니다.")
+        return
+
+    table_cols = ["Recipe", "종합 점수", "Wafer 수", "Top CD", "Mid CD", "Bottom CD", "Depth", "Overall Spec Pass Rate"]
+    st.dataframe(scoreboard[table_cols].round(1), use_container_width=True, hide_index=True)
+    st.plotly_chart(build_recipe_score_chart(scoreboard), use_container_width=True)
 
 
 # ==============================================================================
@@ -591,6 +637,13 @@ def show_wafer_map(filtered_site: pd.DataFrame):
         with col:
             st.plotly_chart(build_wafer_map(filtered_site, metric_col, label), use_container_width=True)
     st.caption("Zone: Center(중심) → Mid → Edge → Extreme Edge(바깥쪽) · 선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시")
+
+    st.markdown("**Wafer 단면 Profile (가독성 보완용 — 멘토 피드백)**")
+    st.caption("x축 = Point 번호. Edge → Center → Edge 순서라 정확한 수치 비교가 위 2D Wafer Map보다 쉽습니다.")
+    profile_cols = st.columns(4)
+    for col, (label, metric_col) in zip(profile_cols, WAFER_MAP_METRICS.items()):
+        with col:
+            st.plotly_chart(build_wafer_profile_chart(filtered_site, metric_col, label), use_container_width=True)
 
 
 # ==============================================================================
@@ -648,78 +701,98 @@ def main():
 
     tab1, tab2 = st.tabs(["🔮 공정 예측 · 평가 · 추천", "📊 Process Dashboard"])
 
-    # ---- Tab 1: 입력(A~D) → 예측/평가/추천/비교(Output A~D) ----
+    # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
     with tab1:
         workbook = get_active_workbook()
-        inputs, targets, submitted = create_input_panel()
+        mode, inputs, targets, submitted, stage_defs, recipe, _ = create_input_panel()
 
-        def _run_prediction(allow_out_of_range: bool = False):
-            result = predict(
-                inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"],
-                process=process, allow_out_of_range=allow_out_of_range,
-            )
-            evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
-            recommendation = None
-            param_suggestions = None
-            if not result.get("_error"):
-                recommendation = recommend_best_recipe(
-                    inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
+        if mode == "target":
+            # 모드 1: 목표 품질 → 레시피 변경점 추천 (Output E 중심)
+            if submitted:
+                baseline_result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process)
+                suggestion = (
+                    recommend_parameter_adjustments(inputs, process=process)
+                    if not baseline_result.get("_error")
+                    else {"error": baseline_result.get("_error")}
                 )
-                param_suggestions = recommend_parameter_adjustments(
-                    inputs, process=process, allow_out_of_range=allow_out_of_range,
-                )
+                st.session_state.target_mode_baseline = baseline_result
+                st.session_state.target_mode_suggestion = suggestion
 
-            st.session_state.prediction_result = result
-            st.session_state.prediction_inputs = inputs
-            st.session_state.prediction_targets = targets
-            st.session_state.prediction_evaluation = evaluation
-            st.session_state.prediction_recommendation = recommendation
-            st.session_state.prediction_param_suggestions = param_suggestions
-
-        if submitted:
-            _run_prediction(allow_out_of_range=False)
-
-        result = st.session_state.prediction_result
-        if result is not None:
-            if result.get("_out_of_range"):
+            baseline_result = st.session_state.get("target_mode_baseline")
+            if baseline_result is not None:
                 st.markdown("---")
-                st.warning(f"⚠️ {result['_error']}")
-                st.caption("학습 데이터 밖의 값이라 예측 신뢰도가 떨어질 수 있습니다. 그래도 이 값으로 결과를 보고 싶다면 아래 버튼을 누르세요.")
-                if st.button("그래도 이 값으로 실행", key="force_out_of_range_run"):
-                    _run_prediction(allow_out_of_range=True)
-                    st.rerun()
+                st.markdown(f"<div class='section-title'>'{recipe}' 기준 현재 예측 품질</div>", unsafe_allow_html=True)
+                show_prediction(baseline_result)
+                st.markdown("---")
+                show_parameter_recommendations(st.session_state.get("target_mode_suggestion"))
             else:
-                st.markdown("---")
-                show_prediction(result)
-                if not result.get("_error"):
-                    st.markdown("---")
-                    show_target_evaluation(st.session_state.prediction_evaluation)
-                    st.markdown("---")
-                    show_recommendation(
-                        st.session_state.prediction_inputs, st.session_state.prediction_recommendation,
-                        workbook["Recipe_Master"], stage_defs,
-                    )
-                    st.markdown("---")
-                    show_comparison(
-                        st.session_state.prediction_result,
-                        st.session_state.prediction_evaluation["score"],
-                        st.session_state.prediction_recommendation,
-                    )
-                    st.markdown("---")
-                    show_parameter_recommendations(st.session_state.prediction_param_suggestions)
+                st.info("목표 품질을 확인하고 '변경점 추천 실행' 버튼을 눌러주세요.")
+
         else:
-            st.info("공정 조건과 목표 품질을 입력하고 '예측 · 평가 · 추천 실행' 버튼을 눌러주세요.")
+            # 모드 2: 레시피 조건 직접 입력 → 품질 평가 (Output A~D)
+            def _run_prediction(allow_out_of_range: bool = False):
+                result = predict(
+                    inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"],
+                    process=process, allow_out_of_range=allow_out_of_range,
+                )
+                evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
+                recommendation = None
+                if not result.get("_error"):
+                    recommendation = recommend_best_recipe(
+                        inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
+                    )
+
+                st.session_state.prediction_result = result
+                st.session_state.prediction_inputs = inputs
+                st.session_state.prediction_targets = targets
+                st.session_state.prediction_evaluation = evaluation
+                st.session_state.prediction_recommendation = recommendation
+
+            if submitted:
+                _run_prediction(allow_out_of_range=False)
+
+            result = st.session_state.prediction_result
+            if result is not None:
+                if result.get("_out_of_range"):
+                    st.markdown("---")
+                    st.warning(f"⚠️ {result['_error']}")
+                    st.caption("학습 데이터 밖의 값이라 예측 신뢰도가 떨어질 수 있습니다. 그래도 이 값으로 결과를 보고 싶다면 아래 버튼을 누르세요.")
+                    if st.button("그래도 이 값으로 실행", key="force_out_of_range_run"):
+                        _run_prediction(allow_out_of_range=True)
+                        st.rerun()
+                else:
+                    st.markdown("---")
+                    show_prediction(result)
+                    if not result.get("_error"):
+                        st.markdown("---")
+                        show_target_evaluation(st.session_state.prediction_evaluation)
+                        st.markdown("---")
+                        show_recommendation(
+                            st.session_state.prediction_inputs, st.session_state.prediction_recommendation,
+                            workbook["Recipe_Master"], stage_defs,
+                        )
+                        st.markdown("---")
+                        show_comparison(
+                            st.session_state.prediction_result,
+                            st.session_state.prediction_evaluation["score"],
+                            st.session_state.prediction_recommendation,
+                        )
+            else:
+                st.info("공정 조건과 목표 품질을 입력하고 '예측 · 평가 · 추천 실행' 버튼을 눌러주세요.")
 
     # ---- Tab 2: Process Dashboard (조건 선택 → AI 분석(맨 위) → Summary → 시각화 → Wafer Map → Zone 분석) ----
     with tab2:
         workbook = get_active_workbook()
-        filtered_wafer, filtered_site = create_process_dashboard_selectors(workbook, process)
+        filtered_wafer, filtered_site, equipment_chamber_wafer = create_process_dashboard_selectors(workbook, process)
 
         st.markdown("---")
         zone_summary_preview = get_zone_summary(filtered_site) if not filtered_site.empty else None
         show_dashboard_ai_analysis(filtered_wafer, zone_summary_preview)
         st.markdown("---")
         show_process_summary(filtered_wafer)
+        dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
+        show_recipe_scoreboard(equipment_chamber_wafer, dashboard_targets)
+        st.markdown("---")
         show_quality_visualization(filtered_wafer)
         show_wafer_map(filtered_site)
         show_zone_analysis(filtered_site)

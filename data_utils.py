@@ -367,11 +367,12 @@ def ordered_recipe_versions(recipe_df: pd.DataFrame, subset_values=None) -> list
     return result
 
 
-def get_default_targets(wafer_df: pd.DataFrame, recipe_df: pd.DataFrame) -> dict:
-    """목표 품질(Input C) 기본값. Target CD/Depth는 가장 마지막(최신/성숙) Recipe의 실측 평균을 사용하고,
+def get_default_targets(wafer_df: pd.DataFrame, recipe_df: pd.DataFrame, recipe: str | None = None) -> dict:
+    """목표 품질(Input C) 기본값. Target CD/Depth는 선택된 Recipe(참고용 베이스라인)의 실측 평균을 사용해
+    "참고값 → 목표값" 형태로 보여줄 수 있게 한다. recipe를 안 넘기면 가장 마지막(최신/성숙) Recipe를 쓴다.
     Uniformity/Pass Rate/Defect Count 기준은 통상적인 근사 목표치를 기본값으로 둔다 (모두 사용자 조정 가능)."""
-    best_recipe = recipe_df["Recipe_Version"].iloc[-1]
-    subset = wafer_df[wafer_df["Recipe_Version"] == best_recipe]
+    reference_recipe = recipe if recipe is not None else recipe_df["Recipe_Version"].iloc[-1]
+    subset = wafer_df[wafer_df["Recipe_Version"] == reference_recipe]
     if subset.empty:
         subset = wafer_df
     return {
