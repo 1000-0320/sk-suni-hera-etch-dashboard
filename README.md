@@ -80,21 +80,15 @@ streamlit run app.py
 
 ---
 
-## 배포 방식 (Streamlit Cloud) — 코치님께 확인 필요한 사항
+## 배포 방식 (Streamlit Cloud)
 
 현재 [Streamlit Community Cloud](https://streamlit.io/cloud)로 배포되어 있음.
 
-**Vercel로 옮기는 건 지금 바로는 어려움** — 기술적 구조가 안 맞기 때문:
-
-- Streamlit은 화면이 켜져 있는 동안 서버가 계속 상태를 들고 있어야 하는 방식(상시 서버 + WebSocket).
-- Vercel은 요청 올 때만 잠깐 켜졌다 꺼지는 서버리스 함수 방식이라, 이 둘이 구조적으로 안 맞음.
-- Vercel에서 하려면 지금 Streamlit 화면을 통째로 버리고 React/Next.js로 새로 만들어야 함 (규모가 큰 재작업, 하루 안에 불가).
-
-→ 내일 회의에서 코치님께: "Vercel은 Streamlit 구조와 안 맞아 정식 지원이 안 되는데, 그래도 옮기길 원하시는지 / 지금처럼 Streamlit Cloud 유지해도 되는지" 확인 필요.
+**Vercel로 옮기는 건 기술적 구조가 안 맞음** (상시 서버+WebSocket 방식 vs Vercel의 서버리스 방식) —
+코치님께 확인 결과, 지금처럼 Streamlit Cloud 유지하는 걸로 확정.
 
 ---
 
 ## 아직 안 한 것
 
-- `recipe master.csv` 원본 파일은 용량/필요성 문제로 레포에 아직 안 넣음 (학습 스크립트 재현 시 각자 경로 지정 필요)
-- `main` 브랜치로 합치는 PR은 아직 안 올림 (지금은 `feature/ai-simulation-seunghyun` 브랜치 상태)
+- `recipe master.csv` 원본 파일은 다른 Excel 파일(`data/*.xlsx`)에 내용이 이미 포함돼 있어서 별도로 안 올림
