@@ -465,7 +465,7 @@ def show_parameter_recommendations(suggestion: dict):
     st.markdown("<div class='section-title'>파라미터별 조정 제안 (AI 추천)</div>", unsafe_allow_html=True)
     st.caption(
         "기존 Recipe 중에서 고르는 게 아니라, 지금 입력한 조건을 그대로 출발점 삼아 "
-        "파라미터를 하나씩 바꿔보면서 품질이 좋아지는 방향을 찾은 결과입니다. "
+        "파라미터를 하나씩 바꿔보면서 위에서 설정한 목표 품질에 가장 가까워지는 방향을 찾은 결과입니다. "
         "실제로 관측된 값 범위 안에서만 탐색하므로, 한 번도 시도되지 않은 값은 제안하지 않습니다."
     )
 
@@ -487,12 +487,12 @@ def show_parameter_recommendations(suggestion: dict):
             "Parameter": r["parameter"],
             "방향": direction_kr.get(r["direction"], r["direction"]),
             "현재값 → 제안값": f"{r['current']:g} → {r['proposed']:g}",
-            "예상 품질 변화": f"{r['predicted_quality_gain_pct_point']:+.2f}점",
+            "목표 대비 점수 변화": f"{r['target_composite_score_gain_pct_point']:+.2f}점",
             "Worst Zone 변화": f"{r['worst_zone_quality_gain_pct_point']:+.2f}점",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.caption(
-        f"현재 조건 기준 품질지수 {suggestion['baseline_quality_index_pct']:.1f}점에서 출발한 결과이며, "
+        f"현재 조건의 목표 대비 종합 점수 {suggestion['baseline_target_score_pct']:.1f}점에서 출발한 결과이며, "
         "One-Factor-at-a-Time(한 번에 파라미터 하나씩) 방식으로 탐색한 것입니다. "
         "인과관계를 증명한 것은 아니며, 실제 적용 전 검증이 필요합니다."
     )
@@ -711,7 +711,7 @@ def main():
             if submitted:
                 baseline_result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process)
                 suggestion = (
-                    recommend_parameter_adjustments(inputs, process=process)
+                    recommend_parameter_adjustments(inputs, targets, process=process)
                     if not baseline_result.get("_error")
                     else {"error": baseline_result.get("_error")}
                 )

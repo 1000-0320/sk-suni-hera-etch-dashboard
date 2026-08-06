@@ -12,6 +12,7 @@ predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 
 import pandas as pd
 
 from ml_engine import isolation_core, trench_core
+from ml_engine.scoring import compute_composite_score
 from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
 
 _CORES = {"isolation": isolation_core, "trench": trench_core}
@@ -105,51 +106,8 @@ def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process:
 
 # ==============================================================================
 # 2. 종합 품질 점수 (Pass Rate 60% + Uniformity 25% + 목표 근접도 15%)
+# 실제 공식은 ml_engine/scoring.py에 있음 (core 엔진의 파라미터 추천도 같은 공식을 써야 해서 공유 모듈로 분리).
 # ==============================================================================
-def _clip(value, lo=0.0, hi=100.0):
-    return max(lo, min(hi, value))
-
-
-def _uniformity_score(value: float, max_allowed: float) -> float:
-    """0이면 100점, max_allowed 이상이면 0점 (선형)"""
-    if max_allowed <= 0:
-        return 0.0
-    return _clip(100 * (1 - value / max_allowed))
-
-
-def _proximity_score(predicted: float, target: float, tolerance_pct: float = 0.05) -> float:
-    """target과 오차 0이면 100점, 오차가 target의 tolerance_pct 이상이면 0점 (선형)"""
-    if target == 0:
-        return 100.0 if predicted == 0 else 0.0
-    tolerance = abs(target) * tolerance_pct
-    error = abs(predicted - target)
-    return _clip(100 * (1 - error / tolerance))
-
-
-def compute_composite_score(result: dict, targets: dict) -> dict:
-    """종합 품질 점수 = Pass Rate 60% + Uniformity 25% + 목표 근접도 15%"""
-    pass_rate_score = _clip(result["Overall Spec Pass Rate"])
-
-    cd_u_score = _uniformity_score(result["CD Uniformity"], targets["max_cd_uniformity"])
-    depth_u_score = _uniformity_score(result["Depth Uniformity"], targets["max_depth_uniformity"])
-    uniformity_score = (cd_u_score + depth_u_score) / 2
-
-    proximity_scores = [
-        _proximity_score(result["Top CD"], targets["target_top_cd"]),
-        _proximity_score(result["Mid CD"], targets["target_mid_cd"]),
-        _proximity_score(result["Bottom CD"], targets["target_bottom_cd"]),
-        _proximity_score(result["Depth"], targets["target_depth"]),
-    ]
-    target_proximity_score = sum(proximity_scores) / len(proximity_scores)
-
-    total = pass_rate_score * 0.60 + uniformity_score * 0.25 + target_proximity_score * 0.15
-
-    return {
-        "total": round(total, 1),
-        "pass_rate_score": round(pass_rate_score, 1),
-        "uniformity_score": round(uniformity_score, 1),
-        "target_proximity_score": round(target_proximity_score, 1),
-    }
 
 
 # ==============================================================================
@@ -324,11 +282,11 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
     return messages
 
 
-def recommend_parameter_adjustments(inputs: dict, process: str = "trench", top_n: int = 5,
+def recommend_parameter_adjustments(inputs: dict, targets: dict, process: str = "trench", top_n: int = 5,
                                      allow_out_of_range: bool = False) -> dict:
     """현재 화면에 입력된 (기존 Recipe가 아닌) Custom 값을 출발점으로,
-    파라미터를 하나씩 바꿔가며(One-Factor-at-a-Time) 관측된 값들 중 품질이 가장 좋아지는
-    방향을 찾는다. Recipe 단위 추천(recommend_best_recipe)과 달리 파라미터 단위 제안이다."""
+    파라미터를 하나씩 바꿔가며(One-Factor-at-a-Time) targets(목표 품질) 기준 종합 점수가
+    가장 좋아지는 방향을 찾는다. Recipe 단위 추천(recommend_best_recipe)과 달리 파라미터 단위 제안이다."""
     core = _CORES[process]
     model_dir = _MODEL_DIRS[process]
     equipment = inputs.get("equipment")
@@ -336,7 +294,7 @@ def recommend_parameter_adjustments(inputs: dict, process: str = "trench", top_n
     recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
     try:
         return core.recommend_parameter_changes(
-            recipe, equipment, chamber, model_dir=model_dir, top_n=top_n,
+            recipe, equipment, chamber, targets, model_dir=model_dir, top_n=top_n,
             allow_out_of_range=allow_out_of_range,
         )
     except ValueError as exc:

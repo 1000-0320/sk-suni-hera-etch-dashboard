@@ -10,6 +10,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from ml_engine.scoring import compute_composite_score
+
 
 PARAMETER_COLUMNS = [
     "S1_Time_s",
@@ -474,15 +476,17 @@ def _predict_quality_summaries(
     recipes: list[dict[str, float]],
     equipment_model: str,
     chamber_id: str,
+    targets: dict[str, float],
     *,
     model_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Vectorized quality-v2 prediction used for one-factor sensitivity screening.
 
     The public ``predict_wafer`` function returns the full 25-site payload.  A
-    recommendation scan only needs the quality-v2 components, so evaluating all
-    trial recipes in one model call is substantially faster and keeps the
-    recommendation button responsive.
+    recommendation scan only needs the quality-v2 components plus CD/Depth (to score
+    each candidate against the user's target quality), so evaluating all trial
+    recipes in one model call is substantially faster and keeps the recommendation
+    button responsive.
     """
     if not recipes:
         return []
@@ -515,6 +519,13 @@ def _predict_quality_summaries(
         else:
             predicted = np.clip(predicted, 0.0, 10.0)
         defect_predictions[target] = predicted
+
+    regression_predictions: dict[str, np.ndarray] = {}
+    for target in REGRESSION_TARGETS:
+        selection = metadata["selected_models"][target]
+        model = _load_model(str(directory / selection["file"]))
+        predicted = np.asarray(model.predict(frame), dtype=float).reshape(recipe_count, site_count)
+        regression_predictions[target] = predicted
 
     quality_v2 = metadata["quality_v2"]
     weights = quality_v2["weights"]
@@ -591,6 +602,31 @@ def _predict_quality_summaries(
             float(weights["wafer_core"]) * wafer_components["core_quality_pct"]
             + float(weights["worst_zone_guardrail"]) * float(worst_zone["zone_quality_pct"])
         )
+
+        cd_depth: dict[str, dict[str, float]] = {}
+        for target in REGRESSION_TARGETS:
+            values = regression_predictions[target][recipe_index]
+            mean_value = float(np.mean(values))
+            std_value = float(np.std(values, ddof=1)) if site_count > 1 else 0.0
+            cd_depth[target] = {
+                "mean": mean_value,
+                "uniformity_pct": 100.0 * std_value / abs(mean_value) if abs(mean_value) > 1e-12 else math.nan,
+            }
+        quality_result = {
+            "Top CD": cd_depth["Top_CD_nm"]["mean"],
+            "Mid CD": cd_depth["Mid_CD_nm"]["mean"],
+            "Bottom CD": cd_depth["Bottom_CD_nm"]["mean"],
+            "Depth": cd_depth["Depth_A"]["mean"] * 0.1,  # Angstrom -> nm (isolation 원본 단위 보정)
+            "CD Uniformity": (
+                cd_depth["Top_CD_nm"]["uniformity_pct"]
+                + cd_depth["Mid_CD_nm"]["uniformity_pct"]
+                + cd_depth["Bottom_CD_nm"]["uniformity_pct"]
+            ) / 3.0,
+            "Depth Uniformity": cd_depth["Depth_A"]["uniformity_pct"],
+            "Overall Spec Pass Rate": overall_hard_spec_pass_rate,
+        }
+        target_composite_score_pct = compute_composite_score(quality_result, targets)["total"]
+
         summaries.append(
             {
                 "parameter_closure_to_rev15_pct": parameter_closure_score(
@@ -604,6 +640,7 @@ def _predict_quality_summaries(
                 "predicted_mean_defect_severity": mean_defect_severity,
                 "worst_zone": worst_zone["zone"],
                 "worst_zone_quality_pct": worst_zone["zone_quality_pct"],
+                "target_composite_score_pct": target_composite_score_pct,
             }
         )
     return summaries
@@ -623,6 +660,7 @@ def recommend_parameter_changes(
     recipe: dict[str, float],
     equipment_model: str,
     chamber_id: str,
+    targets: dict[str, float],
     *,
     process: str = "Isolation Etch",
     layer: str = "Dataset scope (unspecified layer)",
@@ -650,6 +688,21 @@ def recommend_parameter_changes(
     baseline_hard_pass_rate = float(baseline["predicted_overall_spec_pass_rate_pct"])
     baseline_defect_count = float(baseline["predicted_total_defect_count"])
     baseline_severity = float(baseline["predicted_mean_defect_severity"])
+    baseline_wm = baseline["wafer_metrics"]
+    baseline_quality_result = {
+        "Top CD": baseline_wm["Top_CD_nm"]["mean"],
+        "Mid CD": baseline_wm["Mid_CD_nm"]["mean"],
+        "Bottom CD": baseline_wm["Bottom_CD_nm"]["mean"],
+        "Depth": baseline_wm["Depth_A"]["mean"] * 0.1,
+        "CD Uniformity": (
+            baseline_wm["Top_CD_nm"]["uniformity_pct"]
+            + baseline_wm["Mid_CD_nm"]["uniformity_pct"]
+            + baseline_wm["Bottom_CD_nm"]["uniformity_pct"]
+        ) / 3.0,
+        "Depth Uniformity": baseline_wm["Depth_A"]["uniformity_pct"],
+        "Overall Spec Pass Rate": baseline_hard_pass_rate,
+    }
+    baseline_target_score = compute_composite_score(baseline_quality_result, targets)["total"]
     candidate_recipes: list[dict[str, float]] = []
     candidate_keys: list[tuple[str, float]] = []
     for parameter in PARAMETER_COLUMNS:
@@ -666,12 +719,14 @@ def recommend_parameter_changes(
         candidate_recipes,
         equipment_model,
         chamber_id,
+        targets,
         model_dir=directory,
     )
     candidates: list[dict[str, Any]] = []
     for (parameter, proposed), prediction in zip(candidate_keys, candidate_predictions):
         current = float(recipe[parameter])
         quality_gain = float(prediction["predicted_quality_index_pct"]) - baseline_quality
+        target_score_gain = float(prediction["target_composite_score_pct"]) - baseline_target_score
         closure_gain = float(prediction["parameter_closure_to_rev15_pct"]) - baseline_closure
         worst_zone_gain = float(prediction["worst_zone_quality_pct"]) - baseline_worst_zone
         spec_probability_gain = (
@@ -686,6 +741,8 @@ def recommend_parameter_changes(
                 "current": current,
                 "proposed": proposed,
                 "step": abs(proposed - current),
+                "target_composite_score_pct": prediction["target_composite_score_pct"],
+                "target_composite_score_gain_pct_point": target_score_gain,
                 "predicted_quality_gain_pct_point": quality_gain,
                 "parameter_closure_gain_pct_point": closure_gain,
                 "worst_zone_quality_gain_pct_point": worst_zone_gain,
@@ -716,6 +773,7 @@ def recommend_parameter_changes(
 
     def ranking_key(row: dict[str, Any]) -> tuple[float, ...]:
         return (
+            float(row["target_composite_score_gain_pct_point"]),
             float(row["predicted_quality_gain_pct_point"]),
             float(row["worst_zone_quality_gain_pct_point"]),
             float(row["predicted_mean_spec_pass_probability_change_pct_point"]),
@@ -724,6 +782,11 @@ def recommend_parameter_changes(
         )
 
     def improves_quality_or_tied_submetric(row: dict[str, Any]) -> bool:
+        target_gain = float(row["target_composite_score_gain_pct_point"])
+        if target_gain > epsilon:
+            return True
+        if abs(target_gain) > epsilon:
+            return False
         quality_gain = float(row["predicted_quality_gain_pct_point"])
         if quality_gain > epsilon:
             return True
@@ -827,6 +890,7 @@ def recommend_parameter_changes(
     )
     return {
         "baseline_quality_index_pct": baseline_quality,
+        "baseline_target_score_pct": baseline_target_score,
         "baseline_parameter_closure_pct": baseline_closure,
         "baseline_worst_zone_quality_pct": baseline_worst_zone,
         "baseline_mean_spec_pass_probability_pct": baseline_spec_probability,
