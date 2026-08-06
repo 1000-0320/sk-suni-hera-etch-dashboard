@@ -4,7 +4,7 @@
 ① 예상 웨이퍼 품질 예측 → ② 목표 스펙 대비 점수화 → ③ 파라미터 조정 추천까지 해주는 대시보드.
 
 - 배포 링크(현재 실행 중): https://etch-ai-dashboard-ya5v2zh6mugcc2g4noc5km.streamlit.app/
-- 브랜치: `feature/ai-simulation-seunghyun` (원본 `main`은 건드리지 않음)
+- 브랜치: `feature/ai-simulation-seunghyun` (배포는 이 브랜치 기준. `main`도 최신으로 fast-forward 동기화해둠)
 
 ---
 
