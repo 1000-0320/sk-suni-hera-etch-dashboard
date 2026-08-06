@@ -32,6 +32,11 @@ recipe master csv는 별도 파일이라 이 레포에는 포함되어 있지 �
 `simulator_core.py`는 `ml_engine/isolation_core.py` / `ml_engine/trench_core.py`와 같은 내용이며,
 학습 스크립트가 참조하는 상수(파라미터 목록 등)를 그대로 쓰기 위해 이 폴더에도 같이 두었습니다.
 
+## trench 상세 분석 문서
+
+데이터 규모(Wafer/Site 수), 항목별 모델 선택 로직, 품질 점수 공식(대시보드용 vs 학습 파이프라인용
+두 가지), Defect 정규화 수식까지 자세히 정리한 문서 → [`trench/ANALYSIS_SUMMARY.md`](trench/ANALYSIS_SUMMARY.md)
+
 ## isolation과 trench의 차이
 
 trench 쪽 스크립트는 영진님이 isolation용으로 먼저 만들어두신 방식을 그대로 가져와서,
