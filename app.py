@@ -638,8 +638,8 @@ def show_wafer_map(filtered_site: pd.DataFrame):
             st.plotly_chart(build_wafer_map(filtered_site, metric_col, label), use_container_width=True)
     st.caption("Zone: Center(중심) → Mid → Edge → Extreme Edge(바깥쪽) · 선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시")
 
-    st.markdown("**Wafer 단면 Profile (가독성 보완용 — 멘토 피드백)**")
-    st.caption("x축 = Point 번호. Edge → Center → Edge 순서라 정확한 수치 비교가 위 2D Wafer Map보다 쉽습니다.")
+    st.markdown("**Wafer 단면 Profile**")
+    st.caption("x축 = Point 번호. Edge → Center → Edge 순서라 위 2D Wafer Map보다 정확한 수치 비교가 쉽습니다.")
     profile_cols = st.columns(4)
     for col, (label, metric_col) in zip(profile_cols, WAFER_MAP_METRICS.items()):
         with col:
