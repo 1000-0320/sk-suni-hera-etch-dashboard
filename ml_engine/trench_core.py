@@ -94,9 +94,17 @@ class OutOfRangeError(ValueError):
     """Recipe 파라미터가 학습 데이터 관측 범위를 벗어났을 때 발생 (allow_out_of_range=True로 우회 가능)."""
 
 
+def _format_violations_table(violations: list[tuple[str, float, float, float]]) -> str:
+    rows = "\n".join(
+        f"| {parameter} | {value:g} | {lower:g} - {upper:g} |"
+        for parameter, value, lower, upper in violations
+    )
+    return "| 파라미터 | 입력값 | 허용 범위 |\n|---|---|---|\n" + rows
+
+
 def validate_parameter_ranges(
     recipe: dict[str, float], metadata: dict[str, Any], allow_out_of_range: bool = False
-) -> list[str]:
+) -> list[tuple[str, float, float, float]]:
     """학습 데이터 범위를 벗어난 입력값을 찾는다.
 
     기본은 하나라도 벗어나면 OutOfRangeError를 던져 예측을 시작하기 전에 막는다.
@@ -107,11 +115,11 @@ def validate_parameter_ranges(
         lower, upper = metadata["parameter_ranges"][parameter]
         value = float(recipe[parameter])
         if value < lower or value > upper:
-            violations.append(f"{parameter}={value:g} (허용 범위: {lower:g} - {upper:g})")
+            violations.append((parameter, value, lower, upper))
     if violations and not allow_out_of_range:
         raise OutOfRangeError(
-            "학습 데이터 범위를 벗어난 입력값이 있어 예측을 실행하지 않았습니다: "
-            + "; ".join(violations)
+            "학습 데이터 범위를 벗어난 입력값이 있어 예측을 실행하지 않았습니다.\n\n"
+            + _format_violations_table(violations)
         )
     return violations
 
@@ -399,8 +407,8 @@ def predict_wafer(
         warnings.append("Process and Layer are metadata only because the source data has no Process/Layer columns.")
     if range_violations:
         warnings.append(
-            "학습 range를 벗어난 입력값으로 예측했습니다 (신뢰도 낮음, 값이 클수록 예측이 평평해질 수 있음): "
-            + "; ".join(range_violations)
+            "학습 range를 벗어난 입력값으로 예측했습니다 (신뢰도 낮음, 값이 클수록 예측이 평평해질 수 있음).\n\n"
+            + _format_violations_table(range_violations)
         )
 
     site_rows = []
