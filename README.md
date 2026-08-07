@@ -5,6 +5,7 @@
 
 - 배포 링크(현재 실행 중): https://etch-ai-dashboard-ya5v2zh6mugcc2g4noc5km.streamlit.app/
 - 브랜치: `feature/ai-simulation-seunghyun` (배포는 이 브랜치 기준. `main`도 최신으로 fast-forward 동기화해둠)
+- **전체 과정(배경/데이터/모델학습/품질점수/버그이력 등) 한번에 보려면 → [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)**
 
 ---
 
