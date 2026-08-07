@@ -291,4 +291,3 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 
 - 신규 공정(isolation/trench 외) 온보딩 자동화 — 지금은 학습 스크립트·대시보드 연결 5곳을 수동 수정해야 해서, 코치님과 상의 후 팀 자체 숙제로 보류 중
 - CV 비교 원본 수치(`results/recipe_holdout_cv.csv`, RF/XGBoost/MLP 항목별 raw 점수표)가 로컬에도 보존 안 됨 — 최종 선택 결과만 `metadata.json`에 남아있고 중간 비교표는 재현 필요시 다시 돌려야 함
-- 데이터 분석 단계 설명 문서(`v2_분석_결과_설명.docx` 등)는 iCloud 로컬 보관 중, 이 git 저장소엔 미포함 — 필요하면 별도 공유
