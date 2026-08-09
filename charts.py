@@ -20,11 +20,11 @@ def _status_colors_for_values(values, warn_th=90, good_th=95):
     colors = []
     for v in values:
         if v >= good_th:
-            colors.append(COLORS["good"])
+            colors.append(COLORS["chart_good"])
         elif v >= warn_th:
-            colors.append(COLORS["warning"])
+            colors.append(COLORS["chart_warning"])
         else:
-            colors.append(COLORS["critical"])
+            colors.append(COLORS["chart_critical"])
     return colors
 
 
@@ -178,7 +178,7 @@ def build_particle_chart(wafer_df):
     has_defect = wafer_df["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD
     counts = has_defect.value_counts()
     labels = ["발생" if v else "미발생" for v in counts.index]
-    colors = [COLORS["critical"] if v else COLORS["good"] for v in counts.index]
+    colors = [COLORS["chart_critical"] if v else COLORS["chart_good"] for v in counts.index]
     fig = go.Figure(go.Bar(
         x=labels, y=counts.values, marker_color=colors,
         text=counts.values, textposition="outside",
@@ -217,9 +217,9 @@ def build_wafer_map(filtered_site_df, value_col: str, value_label: str):
     fig.add_trace(go.Scatter(
         x=xs, y=ys, mode="markers",
         marker=dict(
-            size=20, color=vals, colorscale="Blues", showscale=True,
+            size=20, color=vals, colorscale=COLORS["wafer_colorscale"], showscale=True,
             colorbar=dict(title=value_label, thickness=14),
-            line=dict(width=0.5, color="white"),
+            line=dict(width=0.5, color=COLORS["surface"]),
         ),
         text=[f"{z}<br>{value_label}: {v:.2f}" for z, v in zip(zone_labels, vals)],
         hoverinfo="text", showlegend=False,
@@ -257,7 +257,7 @@ def build_wafer_profile_chart(filtered_site_df, value_col: str, value_label: str
     ordered = pd.concat([outer, center, outer.iloc[::-1]], ignore_index=True)
     ordered["Point"] = range(1, len(ordered) + 1)
 
-    colors = [COLORS["critical"] if z == "Center" else COLORS["series1"] for z in ordered["Zone"]]
+    colors = [COLORS["chart_critical"] if z == "Center" else COLORS["series1"] for z in ordered["Zone"]]
     fig = go.Figure(go.Scatter(
         x=ordered["Point"], y=ordered[value_col], mode="lines+markers",
         line=dict(color=COLORS["series1"], width=2),
@@ -268,13 +268,13 @@ def build_wafer_profile_chart(filtered_site_df, value_col: str, value_label: str
         center_point = ordered.loc[ordered["Zone"] == "Center", "Point"].mean()
         fig.add_vline(x=center_point, line_dash="dash", line_color=COLORS["muted"], annotation_text="Center")
     fig.update_layout(
-        title=f"Wafer 단면 Profile — {value_label} (Edge → Center → Edge)",
+        title=f"Wafer 단면 Profile — {value_label}",
         xaxis_title="Point #", yaxis_title=value_label,
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
         margin=dict(t=50, b=40, l=30, r=20), height=340, showlegend=False,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
-    fig.update_xaxes(showgrid=False, dtick=1)
+    fig.update_xaxes(showgrid=False, dtick=max(1, len(ordered) // 8))
     return fig
 
 
@@ -351,7 +351,7 @@ def build_zone_pass_rate_chart(zone_summary):
 
 def build_zone_defect_chart(zone_summary):
     fig = go.Figure(go.Bar(
-        x=zone_summary["Zone"], y=zone_summary["Defect Rate"], marker_color=COLORS["critical"],
+        x=zone_summary["Zone"], y=zone_summary["Defect Rate"], marker_color=COLORS["chart_critical"],
     ))
     fig.update_layout(
         title="Zone별 Defect(Particle) 발생률", yaxis_title="Defect 발생률 (%)",

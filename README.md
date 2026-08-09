@@ -96,6 +96,21 @@ streamlit run app.py
 
 현재 [Streamlit Community Cloud](https://streamlit.io/cloud)로 배포되어 있음.
 
+### 로그인 모드와 Secrets 설정
+
+기본값은 공모전 제출용 `demo` 모드다. 실제 계정 검증이 필요해지면 Streamlit Community Cloud의
+**App settings → Secrets**에 [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example) 형식으로
+값을 등록하고 `auth_mode = "production"`으로 변경한다. 실제 아이디와 비밀번호는 Git에 커밋하지 않는다.
+
+```toml
+[app]
+auth_mode = "production"
+
+[auth]
+admin_user = "실제_아이디"
+admin_password = "실제_비밀번호"
+```
+
 **Vercel로 옮기는 건 기술적 구조가 안 맞음** (상시 서버+WebSocket 방식 vs Vercel의 서버리스 방식) —
 코치님께 확인 결과, 지금처럼 Streamlit Cloud 유지하는 걸로 확정.
 

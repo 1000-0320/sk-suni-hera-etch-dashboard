@@ -10,9 +10,15 @@ isolation / trench 두 공정을 선택할 수 있고, 학습된 RandomForest/XG
 실행: streamlit run app.py
 """
 
+from datetime import datetime
+from html import escape
+from time import perf_counter
+from zoneinfo import ZoneInfo
+
 import pandas as pd
 import streamlit as st
 
+from app_config import APP_VERSION, DEPLOYMENT_DATE, get_auth_mode_label
 from model import (
     predict, compute_composite_score, evaluate_against_target, score_recipe_versions,
     recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
@@ -27,6 +33,7 @@ from style import (
     inject_custom_css, render_metric_card, render_summary_card, render_status_badge,
     render_score_hero, render_subscore_card, render_pill_card,
     get_pass_rate_status, get_cd_uniformity_status, get_depth_uniformity_status, get_particle_status,
+    get_score_status, STATUS_META,
 )
 from charts import (
     build_cd_bar_chart, build_gauge_chart, build_variation_gauge,
@@ -38,6 +45,7 @@ from charts import (
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
 )
+from login_page import render_login_page, render_sidebar_logout
 
 st.set_page_config(page_title="Etch AI Decision Support System", page_icon="🧪", layout="wide")
 inject_custom_css()
@@ -46,6 +54,8 @@ inject_custom_css()
 WAFER_MAP_METRICS = {
     "Top CD": "Top_CD_nm", "Mid CD": "Mid_CD_nm", "Bottom CD": "Bottom_CD_nm", "Depth": "Depth_nm",
 }
+TARGET_MODE_LABEL = "목표 품질 → 레시피 변경점 추천"
+DIRECT_MODE_LABEL = "레시피 조건 직접 입력 → 품질 평가"
 
 
 # ==============================================================================
@@ -53,6 +63,9 @@ WAFER_MAP_METRICS = {
 # ==============================================================================
 def init_session_state():
     defaults = {
+        "authenticated": False,
+        "authenticated_user": None,
+        "authenticated_department": None,
         "process": "trench",
         "uploaded_filename": None,
         "sheet_names": [],
@@ -65,6 +78,11 @@ def init_session_state():
         "prediction_recommendation": None,
         "target_mode_baseline": None,
         "target_mode_suggestion": None,
+        "quality_history": [],
+        "prediction_running": False,
+        "last_run_duration": None,
+        "last_run_error": None,
+        "last_run_kind": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -89,27 +107,105 @@ def using_real_data() -> bool:
     return is_valid_workbook(st.session_state.workbook, process) and st.session_state.workbook_process == process
 
 
+_DASHBOARD_WAFER_ICONS = {
+    "summary": """
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M8 4.5v15M12 3.5v17M16 4.5v15M4.5 8h15M3.5 12h17M4.5 16h15" class="wafer-detail" />
+            <path d="M10 20.2h4" />
+        </svg>
+    """,
+    "score": """
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M7 15v2M11 11v6M15 7v10" />
+            <path d="M10 20.2h4" />
+        </svg>
+    """,
+    "quality": """
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M6.5 14.5l3-3 2.6 2 4.9-5" />
+            <path d="M10 20.2h4" />
+        </svg>
+    """,
+    "map": """
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <circle cx="12" cy="12" r="4.5" class="wafer-detail" />
+            <path d="M12 3.5v17M3.5 12h17" class="wafer-detail" />
+            <path d="M10 20.2h4" />
+        </svg>
+    """,
+    "zone": """
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 3.5V12l6 6M12 12H3.5M12 12l-6 6" class="wafer-detail" />
+            <path d="M10 20.2h4" />
+        </svg>
+    """,
+    "ai": """
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M8 8.5l4 3.5 4-3.5M8 15.5l4-3.5 4 3.5" class="wafer-detail" />
+            <circle cx="8" cy="8.5" r="1" /><circle cx="16" cy="8.5" r="1" />
+            <circle cx="12" cy="12" r="1" /><circle cx="8" cy="15.5" r="1" /><circle cx="16" cy="15.5" r="1" />
+            <path d="M10 20.2h4" />
+        </svg>
+    """,
+}
+
+
+def render_dashboard_section_title(title: str, icon: str, tone: str = "coral") -> None:
+    """Process Dashboard 섹션 제목을 통일된 웨이퍼 라인 아이콘으로 표시한다."""
+    st.markdown(
+        f"""
+        <div class="dashboard-section-title tone-{escape(tone)}">
+            <span class="dashboard-section-icon">{_DASHBOARD_WAFER_ICONS[icon]}</span>
+            <span>{escape(title)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ==============================================================================
 # 0. 공정 선택 (isolation / trench) — 화면 전체에 영향
 # ==============================================================================
 def create_process_selector():
-    st.markdown("## 🧪 공정 선택")
     options = list(PROCESS_STAGE_DEFS.keys())
-    labels = {k: PROCESS_LABELS[k] for k in options}
-    selected = st.radio(
-        "분석할 공정",
-        options,
-        format_func=lambda k: labels[k],
-        horizontal=True,
-        key="process_selector",
+    short_labels = {"isolation": "Isolation", "trench": "Trench"}
+
+    st.markdown(
+        """
+        <div class="app-shell-header">
+            <div class="app-shell-eyebrow">ETCH PROCESS INTELLIGENCE</div>
+            <h1 class="app-shell-title">Decision Support Center</h1>
+            <div class="app-shell-subtitle">반도체 Etch 공정 예측, 품질 평가와 의사결정을 하나의 흐름에서 관리합니다.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+
+    selector_col, _ = st.columns([1.55, 3.45], gap="large")
+    with selector_col:
+        st.markdown('<div class="process-selector-anchor">ACTIVE PROCESS</div>', unsafe_allow_html=True)
+        selected = st.radio(
+            "분석할 공정",
+            options,
+            index=options.index(st.session_state.process),
+            format_func=lambda key: short_labels.get(key, key.title()),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="process_selector",
+        )
+
     if selected != st.session_state.process:
         st.session_state.process = selected
         st.session_state.prediction_result = None
         st.session_state.prediction_recommendation = None
         st.session_state.target_mode_baseline = None
         st.session_state.target_mode_suggestion = None
-    st.caption("공정을 바꾸면 파라미터 입력창과 예측 모델이 해당 공정 것으로 전환됩니다.")
 
 
 # ==============================================================================
@@ -117,47 +213,266 @@ def create_process_selector():
 # ==============================================================================
 def create_sidebar():
     with st.sidebar:
+        render_sidebar_logout()
         process = st.session_state.process
-        st.markdown(f"## 📁 데이터 업로드 ({PROCESS_LABELS[process]})")
-        uploaded_file = st.file_uploader("Excel 파일 업로드 (.xlsx)", type=["xlsx"], key=f"uploader_{process}")
 
-        if uploaded_file is not None:
-            st.session_state.uploaded_filename = uploaded_file.name
-            st.success(f"업로드됨: {uploaded_file.name}")
+        st.markdown('<div class="sidebar-section-label">ACTIVE PROCESS</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="sidebar-context-card">
+                <div class="label">현재 분석 공정</div>
+                <div class="value"><span class="dot"></span>{PROCESS_LABELS[process]}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-            try:
-                excel_file = pd.ExcelFile(uploaded_file)
-                st.session_state.sheet_names = excel_file.sheet_names
+        st.markdown('<div class="sidebar-section-label">DATA WORKSPACE</div>', unsafe_allow_html=True)
+        with st.expander("Excel 데이터 연결", expanded=False):
+            uploaded_file = st.file_uploader(
+                "Excel 파일 (.xlsx)",
+                type=["xlsx"],
+                key=f"uploader_{process}",
+            )
 
-                st.markdown("**시트 목록**")
-                for sheet in st.session_state.sheet_names:
-                    mark = "✅" if sheet in REQUIRED_SHEETS else "•"
-                    st.markdown(f"- {mark} {sheet}")
+            if uploaded_file is not None:
+                st.session_state.uploaded_filename = uploaded_file.name
+                st.success(f"선택됨: {uploaded_file.name}")
 
-                if st.button("📥 데이터 불러오기", use_container_width=True):
-                    sheets = load_required_sheets(excel_file)
-                    if is_valid_workbook(sheets, process):
-                        st.session_state.workbook = sheets
-                        st.session_state.workbook_process = process
-                        n_wafer = len(sheets["Wafer_Summary"])
-                        n_site = len(sheets["Site_Level_Raw"])
-                        st.success(f"로드 완료: Wafer {n_wafer}장 / Site {n_site}행")
-                    else:
-                        st.error(
-                            f"현재 선택한 공정({PROCESS_LABELS[process]})이 요구하는 시트/컬럼 구조와 맞지 않습니다."
-                        )
-            except Exception as e:
-                st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
-        else:
-            st.info("업로드하지 않으면 레포에 포함된 실측 데이터(기본 제공)로 동작합니다.")
+                try:
+                    excel_file = pd.ExcelFile(uploaded_file)
+                    st.session_state.sheet_names = excel_file.sheet_names
 
-        st.markdown("---")
+                    st.markdown("**시트 확인**")
+                    for sheet in st.session_state.sheet_names:
+                        mark = "✅" if sheet in REQUIRED_SHEETS else "•"
+                        st.markdown(f"- {mark} {sheet}")
+
+                    if st.button("데이터 불러오기", type="primary", use_container_width=True):
+                        sheets = load_required_sheets(excel_file)
+                        if is_valid_workbook(sheets, process):
+                            st.session_state.workbook = sheets
+                            st.session_state.workbook_process = process
+                            n_wafer = len(sheets["Wafer_Summary"])
+                            n_site = len(sheets["Site_Level_Raw"])
+                            st.success(f"로드 완료 · Wafer {n_wafer}장 / Site {n_site}행")
+                        else:
+                            st.error(
+                                f"현재 선택한 공정({PROCESS_LABELS[process]})의 시트/컬럼 구조와 맞지 않습니다."
+                            )
+                except Exception as e:
+                    st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+            else:
+                st.caption("파일을 선택하지 않으면 기본 제공 실측 데이터를 사용합니다.")
+
         if using_real_data():
-            st.success("✅ 업로드한 실측 데이터 사용 중")
+            data_label = "업로드한 실측 데이터"
+            data_detail = st.session_state.uploaded_filename or "사용자 데이터"
         else:
-            st.info("📦 기본 제공 실측 데이터 사용 중")
-        st.caption("필요 시트: Recipe_Master / Wafer_Summary / Site_Level_Raw")
-        st.caption("Etch AI Decision Support System v1.0 · RandomForest/XGBoost 기반 실제 예측")
+            data_label = "기본 제공 실측 데이터"
+            data_detail = "Repository bundled source"
+
+        st.markdown(
+            f"""
+            <div class="sidebar-data-card">
+                <div class="label">현재 데이터 소스</div>
+                <div class="value"><span class="dot"></span>{data_label}</div>
+                <div class="sidebar-footnote">{data_detail}</div>
+            </div>
+            <div class="sidebar-footnote">
+                필요 시트 · Recipe_Master / Wafer_Summary / Site_Level_Raw<br>
+                Etch AI Decision Support System v1.0
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="sidebar-section-label">RECENT QUALITY</div>', unsafe_allow_html=True)
+        recent_quality_slot = st.empty()
+
+        st.markdown('<div class="sidebar-section-label">SYSTEM STATUS</div>', unsafe_allow_html=True)
+        model_status = "READY"
+        source_status = "UPLOADED" if using_real_data() else "BUNDLED"
+        st.markdown(
+            f"""
+            <div class="sidebar-system-card">
+                <div class="sidebar-system-head">
+                    <span>Etch AI</span><strong>{APP_VERSION}</strong>
+                </div>
+                <div class="sidebar-system-row"><span>Auth mode</span><strong>{get_auth_mode_label()}</strong></div>
+                <div class="sidebar-system-row"><span>Model</span><strong class="is-ready">{model_status}</strong></div>
+                <div class="sidebar-system-row"><span>Data source</span><strong>{source_status}</strong></div>
+                <div class="sidebar-system-row"><span>배포일</span><strong>{DEPLOYMENT_DATE}</strong></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    return recent_quality_slot
+
+
+def summarize_recipe_changes(
+    inputs: dict,
+    recipe_master_df: pd.DataFrame,
+    recipe: str,
+    stage_defs: list,
+) -> list[str]:
+    """기준 Recipe와 직접 입력값을 비교해 사람이 읽기 쉬운 변경 목록을 만든다."""
+    baseline = stage_inputs_from_recipe(recipe_master_df, recipe, stage_defs)
+    changes = []
+
+    for stage in stage_defs:
+        stage_key = stage["key"]
+        input_prefix = stage_key.lower()
+        parameters = [
+            (f"{input_prefix}_time", "Etch Time", "s"),
+            (f"{input_prefix}_rf_bias", "RF Bias", "W"),
+            (f"{input_prefix}_pressure", "Pressure", "mT"),
+        ]
+        parameters.extend(
+            (gas_col.lower(), f"{gas_col.split('_')[1]} Flow", "sccm")
+            for gas_col in stage["gas_cols"]
+        )
+
+        for input_key, label, unit in parameters:
+            current = inputs.get(input_key)
+            reference = baseline.get(input_key)
+            if current is None or reference is None:
+                continue
+            if abs(float(current) - float(reference)) > 1e-9:
+                changes.append(f"{stage_key} {label} {float(current):g}{unit}")
+
+    return changes
+
+
+def append_quality_history(
+    result: dict,
+    evaluation: dict,
+    recipe: str,
+    inputs: dict,
+    recipe_master_df: pd.DataFrame,
+    stage_defs: list,
+) -> None:
+    """현재 사용자 세션에 최근 직접 품질 평가를 최대 5개까지 보관한다."""
+    if not result or result.get("_error") or not evaluation:
+        return
+
+    changes = summarize_recipe_changes(inputs, recipe_master_df, recipe, stage_defs)
+    entry = {
+        "evaluated_at": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%m.%d %H:%M"),
+        "process": PROCESS_LABELS[st.session_state.process],
+        "recipe": recipe,
+        "changes": changes[:2],
+        "change_count": len(changes),
+        "score": evaluation.get("score", {}).get("total"),
+        "pass_rate": result.get("Overall Spec Pass Rate"),
+        "cd_uniformity": result.get("CD Uniformity"),
+        "depth_uniformity": result.get("Depth Uniformity"),
+        "defect_count": result.get("Defect Count"),
+    }
+    history = list(st.session_state.get("quality_history", []))
+    history.insert(0, entry)
+    st.session_state.quality_history = history[:5]
+
+
+def render_recent_quality_sidebar(slot):
+    """클릭하면 현재 사용자 세션의 최근 품질 평가 최대 5개를 보여준다."""
+    history = list(st.session_state.get("quality_history", []))[:5]
+
+    with slot.container():
+        with st.expander(f"최근에 실시한 품질 평가 · {len(history)}/5", expanded=False):
+            history_size_class = " has-multiple" if len(history) >= 2 else ""
+            st.markdown(
+                f'<span class="quality-history-anchor{history_size_class}"></span>',
+                unsafe_allow_html=True,
+            )
+            if not history:
+                st.markdown(
+                    """
+                    <div class="quality-history-empty">
+                        아직 평가 기록이 없습니다.<br>
+                        공정 조건을 입력하고 품질 평가를 실행해 주세요.
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                return
+
+            def metric(value, suffix=""):
+                if value is None:
+                    return "—"
+                return f"{float(value):.1f}{suffix}"
+
+            def delta_item(label, current, previous, suffix="", higher_is_better=True):
+                if current is None or previous is None:
+                    return f'<span><small>{label}</small><strong class="is-neutral">—</strong></span>'
+                delta = float(current) - float(previous)
+                improved = delta > 0 if higher_is_better else delta < 0
+                worsened = delta < 0 if higher_is_better else delta > 0
+                state_class = "is-improved" if improved else "is-worse" if worsened else "is-neutral"
+                arrow = "↑" if delta > 0 else "↓" if delta < 0 else "→"
+                return (
+                    f'<span><small>{label}</small>'
+                    f'<strong class="{state_class}">{arrow} {delta:+.1f}{suffix}</strong></span>'
+                )
+
+            for index, entry in enumerate(history):
+                latest_badge = '<span class="badge">LATEST</span>' if index == 0 else ""
+                process_name = escape(str(entry["process"]))
+                evaluated_at = escape(str(entry["evaluated_at"]))
+                recipe_name = escape(str(entry["recipe"]))
+                changes = [escape(str(change)) for change in entry.get("changes", [])]
+                change_count = int(entry.get("change_count", len(changes)))
+                if changes:
+                    change_text = " · ".join(changes)
+                    remaining_count = max(0, change_count - len(changes))
+                    if remaining_count:
+                        change_text += f" · 외 {remaining_count}개"
+                    change_html = f'<div class="quality-history-change"><strong>변경</strong>{change_text}</div>'
+                else:
+                    change_html = (
+                        '<div class="quality-history-change baseline">'
+                        '<strong>변경 없음</strong>기준 Recipe 조건'
+                        '</div>'
+                    )
+                score_value = entry.get("score")
+                score_color = (
+                    STATUS_META[get_score_status(float(score_value))]["color"]
+                    if score_value is not None
+                    else "#ffffff"
+                )
+                comparison_html = ""
+                if index == 0 and len(history) >= 2:
+                    previous = history[1]
+                    comparison_html = (
+                        '<div class="quality-history-delta-title">LATEST VS PREVIOUS</div>'
+                        '<div class="quality-history-delta-grid">'
+                        f"{delta_item('종합 점수', entry.get('score'), previous.get('score'), '점')}"
+                        f"{delta_item('Pass Rate', entry.get('pass_rate'), previous.get('pass_rate'), '%p')}"
+                        f"{delta_item('CD 균일도', entry.get('cd_uniformity'), previous.get('cd_uniformity'), '%p', False)}"
+                        f"{delta_item('Defect', entry.get('defect_count'), previous.get('defect_count'), '', False)}"
+                        '</div>'
+                    )
+                card_html = (
+                    f'<div class="quality-history-item{" latest" if index == 0 else ""}">'
+                    '<div class="quality-history-head">'
+                    f'<strong>{process_name}</strong><span>{evaluated_at}</span>'
+                    '</div>'
+                    f'<div class="quality-history-meta">Recipe · {recipe_name} {latest_badge}</div>'
+                    f'{change_html}'
+                    '<div class="quality-history-score">'
+                    f'<strong style="color:{score_color};">{metric(score_value)}</strong>'
+                    '<span>종합 품질 점수</span>'
+                    '</div>'
+                    f'{comparison_html}'
+                    '<div class="quality-history-grid">'
+                    f'<span>Pass Rate <strong>{metric(entry["pass_rate"], "%")}</strong></span>'
+                    f'<span>CD 균일도 <strong>{metric(entry["cd_uniformity"], "%")}</strong></span>'
+                    f'<span>Depth 균일도 <strong>{metric(entry["depth_uniformity"], "%")}</strong></span>'
+                    f'<span>Defect <strong>{metric(entry["defect_count"])}</strong></span>'
+                    '</div></div>'
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
 
 
 # ==============================================================================
@@ -242,15 +557,21 @@ def create_input_panel():
 
     # ---- 시뮬레이터 모드 (멘토 피드백: 기능 두 가지를 명확히 분리) ----
     st.markdown("<div class='section-title'>시뮬레이터 모드</div>", unsafe_allow_html=True)
+    st.markdown('<span class="simulator-mode-anchor"></span>', unsafe_allow_html=True)
     mode_label = st.radio(
         "무엇을 하고 싶으신가요?",
-        ["🎯 목표 품질 → 레시피 변경점 추천", "🔧 레시피 조건 직접 입력 → 품질 평가"],
+        [TARGET_MODE_LABEL, DIRECT_MODE_LABEL],
         horizontal=True, key=f"mode_{process}",
     )
 
-    if mode_label.startswith("🎯"):
+    if mode_label == TARGET_MODE_LABEL:
         st.caption("위 Recipe를 출발점으로, 목표 품질에 가까워지려면 파라미터를 어떻게 바꾸면 좋을지 AI가 추천합니다.")
-        run = st.button("🔮 변경점 추천 실행", type="primary", use_container_width=True)
+        run = st.button(
+            "변경점 추천 실행 →",
+            type="primary",
+            use_container_width=True,
+            disabled=st.session_state.get("prediction_running", False),
+        )
         return "target", baseline_inputs, targets, run, stage_defs, recipe, workbook
 
     # ---- 현재 공정 조건 입력 (모든 Stage를 한 번에 펼쳐서 표시 — 멘토 피드백 반영) ----
@@ -293,7 +614,12 @@ def create_input_panel():
                 )
         st.markdown("---")
 
-    submitted = st.button("🔮 예측 · 평가 · 추천 실행", type="primary", use_container_width=True)
+    submitted = st.button(
+        "예측 · 평가 · 추천 실행 →",
+        type="primary",
+        use_container_width=True,
+        disabled=st.session_state.get("prediction_running", False),
+    )
 
     return "recipe", inputs, targets, submitted, stage_defs, recipe, workbook
 
@@ -496,8 +822,14 @@ def show_parameter_recommendations(suggestion: dict):
 # ==============================================================================
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
+def reset_process_dashboard_filters(process: str) -> None:
+    """Process Dashboard의 세 필터를 해당 공정 기본값으로 되돌린다."""
+    for key in (f"pd_equipment_{process}", f"pd_chamber_{process}", f"pd_recipe_{process}"):
+        st.session_state.pop(key, None)
+
+
 def create_process_dashboard_selectors(workbook: dict, process: str):
-    st.markdown("### 🧭 Process Dashboard 조건 선택")
+    st.markdown("### Process Dashboard 조건 선택")
     wafer_df = workbook["Wafer_Summary"]
     recipe_df = workbook["Recipe_Master"]
 
@@ -524,11 +856,31 @@ def create_process_dashboard_selectors(workbook: dict, process: str):
         & (site_df["Recipe_Version"] == recipe)
     ]
 
+    context_col, reset_col = st.columns([5, 1], gap="small")
+    with context_col:
+        st.markdown(
+            f"""
+            <div class="dashboard-context-strip">
+                <span>ACTIVE VIEW</span>
+                <strong>{escape(PROCESS_LABELS[process])} · {escape(str(equipment))} · {escape(str(chamber))} · {escape(str(recipe))}</strong>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with reset_col:
+        st.button(
+            "↺ 필터 초기화",
+            key=f"reset_pd_filters_{process}",
+            on_click=reset_process_dashboard_filters,
+            args=(process,),
+            use_container_width=True,
+        )
+
     return filtered_wafer, filtered_site, df2
 
 
 def show_process_summary(filtered_wafer: pd.DataFrame):
-    st.markdown("### 🗂️ Process Summary")
+    render_dashboard_section_title("Process Summary", "summary")
     if filtered_wafer.empty:
         st.warning("선택한 조건에 해당하는 데이터가 없습니다.")
         return
@@ -570,7 +922,7 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
 # 2-3. Rev별 스코어링 순위 (멘토 피드백: 현재 어떤 레시피가 가장 좋은지 바로 알 수 있게)
 # ==============================================================================
 def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict):
-    st.markdown("### 🏆 Rev별 스코어링 순위")
+    render_dashboard_section_title("Rev별 스코어링 순위", "score", "blue")
     st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
     if equipment_chamber_wafer.empty:
         st.info("선택한 조건에 해당하는 데이터가 없습니다.")
@@ -590,7 +942,7 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict)
 # 3. 품질 결과 시각화 (Wafer 단위 추이) — 각 그래프는 독립 카드
 # ==============================================================================
 def show_quality_visualization(filtered_wafer: pd.DataFrame):
-    st.markdown("### 📊 품질 결과 시각화")
+    render_dashboard_section_title("품질 결과 시각화", "quality")
     if filtered_wafer.empty:
         return
 
@@ -622,7 +974,7 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame):
 # 4. Wafer Map — Top/Mid/Bottom CD와 Depth를 한 번에 표시 (멘토 피드백 반영)
 # ==============================================================================
 def show_wafer_map(filtered_site: pd.DataFrame):
-    st.markdown("### 🎯 Wafer Map (Top/Mid/Bottom CD · Depth 한눈에 비교)")
+    render_dashboard_section_title("Wafer Map (Top/Mid/Bottom CD · Depth 한눈에 비교)", "map", "blue")
     if filtered_site.empty:
         st.info("선택한 조건에 해당하는 Site 데이터가 없습니다.")
         return
@@ -635,17 +987,19 @@ def show_wafer_map(filtered_site: pd.DataFrame):
 
     st.markdown("**Wafer 단면 Profile**")
     st.caption("x축 = Point 번호. Edge → Center → Edge 순서라 위 2D Wafer Map보다 정확한 수치 비교가 쉽습니다.")
-    profile_cols = st.columns(4)
-    for col, (label, metric_col) in zip(profile_cols, WAFER_MAP_METRICS.items()):
-        with col:
-            st.plotly_chart(build_wafer_profile_chart(filtered_site, metric_col, label), use_container_width=True)
+    profile_items = list(WAFER_MAP_METRICS.items())
+    for row_start in range(0, len(profile_items), 2):
+        profile_cols = st.columns(2, gap="large")
+        for col, (label, metric_col) in zip(profile_cols, profile_items[row_start:row_start + 2]):
+            with col:
+                st.plotly_chart(build_wafer_profile_chart(filtered_site, metric_col, label), use_container_width=True)
 
 
 # ==============================================================================
 # 5. Zone 분석
 # ==============================================================================
 def show_zone_analysis(filtered_site: pd.DataFrame):
-    st.markdown("### 🧩 Zone 분석")
+    render_dashboard_section_title("Zone 분석", "zone")
     if filtered_site.empty:
         return None
 
@@ -673,7 +1027,7 @@ def show_zone_analysis(filtered_site: pd.DataFrame):
 # 6. AI 분석 (Process Dashboard, Rule Base) — 순서상 맨 위로 (멘토 피드백 반영)
 # ==============================================================================
 def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.DataFrame):
-    st.markdown("### 🤖 AI 분석")
+    render_dashboard_section_title("AI 분석", "ai", "blue")
     messages = generate_dashboard_analysis(filtered_wafer, zone_summary)
     html = "<div class='analysis-card'>" + "".join(f"<div>• {m}</div>" for m in messages) + "</div>"
     st.markdown(html, unsafe_allow_html=True)
@@ -683,18 +1037,16 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
 # 메인 실행부
 # ==============================================================================
 def main():
+    if not st.session_state.authenticated:
+        render_login_page()
+        return
+
     create_process_selector()
-    create_sidebar()
+    recent_quality_slot = create_sidebar()
     process = st.session_state.process
     stage_defs = PROCESS_STAGE_DEFS[process]
 
-    st.markdown("<h1 class='main-title'>🧪 Etch AI Decision Support System</h1>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='subtitle'>반도체 Etch 공정 품질 예측 및 의사결정 지원 시스템</p>",
-        unsafe_allow_html=True,
-    )
-
-    tab1, tab2 = st.tabs(["🔮 공정 예측 · 평가 · 추천", "📊 Process Dashboard"])
+    tab1, tab2 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard"])
 
     # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
     with tab1:
@@ -703,15 +1055,52 @@ def main():
 
         if mode == "target":
             # 모드 1: 목표 품질 → 레시피 변경점 추천 (Output E 중심)
+            def _run_target_recommendation():
+                started_at = perf_counter()
+                st.session_state.prediction_running = True
+                st.session_state.last_run_error = None
+                st.session_state.last_run_kind = "target"
+                with st.status("변경점 추천을 준비하는 중...", expanded=True) as run_status:
+                    try:
+                        run_status.write("선택한 Recipe와 목표 품질을 확인하고 있습니다.")
+                        baseline_result = predict(
+                            inputs,
+                            workbook["Wafer_Summary"],
+                            workbook["Recipe_Master"],
+                            process=process,
+                        )
+                        run_status.write("모델 예측 결과를 바탕으로 파라미터 변경점을 탐색하고 있습니다.")
+                        suggestion = (
+                            recommend_parameter_adjustments(inputs, targets, process=process)
+                            if not baseline_result.get("_error")
+                            else {"error": baseline_result.get("_error")}
+                        )
+                        st.session_state.target_mode_baseline = baseline_result
+                        st.session_state.target_mode_suggestion = suggestion
+                        if baseline_result.get("_error"):
+                            st.session_state.last_run_error = str(baseline_result["_error"])
+                            run_status.update(label="입력값 또는 모델 상태를 확인해 주세요.", state="error", expanded=False)
+                        else:
+                            run_status.update(label="변경점 추천이 완료됐습니다.", state="complete", expanded=False)
+                    except Exception as exc:
+                        st.session_state.target_mode_baseline = None
+                        st.session_state.target_mode_suggestion = None
+                        st.session_state.last_run_error = f"{type(exc).__name__}: {exc}"
+                        run_status.update(label="변경점 추천 중 오류가 발생했습니다.", state="error", expanded=False)
+                    finally:
+                        st.session_state.last_run_duration = perf_counter() - started_at
+                        st.session_state.prediction_running = False
+
             if submitted:
-                baseline_result = predict(inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process)
-                suggestion = (
-                    recommend_parameter_adjustments(inputs, targets, process=process)
-                    if not baseline_result.get("_error")
-                    else {"error": baseline_result.get("_error")}
-                )
-                st.session_state.target_mode_baseline = baseline_result
-                st.session_state.target_mode_suggestion = suggestion
+                _run_target_recommendation()
+
+            if st.session_state.get("last_run_kind") == "target":
+                if st.session_state.get("last_run_error"):
+                    st.error(f"실행 실패 · {st.session_state.last_run_error}")
+                    if st.button("↻ 변경점 추천 다시 시도", key="retry_target_run"):
+                        _run_target_recommendation()
+                elif st.session_state.get("last_run_duration") is not None:
+                    st.caption(f"✅ 최근 변경점 추천 완료 · {st.session_state.last_run_duration:.1f}초")
 
             baseline_result = st.session_state.get("target_mode_baseline")
             if baseline_result is not None:
@@ -726,25 +1115,66 @@ def main():
         else:
             # 모드 2: 레시피 조건 직접 입력 → 품질 평가 (Output A~D)
             def _run_prediction(allow_out_of_range: bool = False):
-                result = predict(
-                    inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"],
-                    process=process, allow_out_of_range=allow_out_of_range,
-                )
-                evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
-                recommendation = None
-                if not result.get("_error"):
-                    recommendation = recommend_best_recipe(
-                        inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
-                    )
+                started_at = perf_counter()
+                st.session_state.prediction_running = True
+                st.session_state.last_run_error = None
+                st.session_state.last_run_kind = "evaluation"
+                with st.status("예측 · 평가 · 추천을 실행하는 중...", expanded=True) as run_status:
+                    try:
+                        run_status.write("공정 입력값과 모델 범위를 확인하고 있습니다.")
+                        result = predict(
+                            inputs, workbook["Wafer_Summary"], workbook["Recipe_Master"],
+                            process=process, allow_out_of_range=allow_out_of_range,
+                        )
+                        run_status.write("예측 결과를 목표 품질과 비교하고 있습니다.")
+                        evaluation = evaluate_against_target(result, targets) if not result.get("_error") else None
+                        recommendation = None
+                        if not result.get("_error"):
+                            run_status.write("현재 조건과 가장 적합한 Recipe를 비교하고 있습니다.")
+                            recommendation = recommend_best_recipe(
+                                inputs["recipe"], inputs, targets, workbook["Wafer_Summary"], workbook["Recipe_Master"], process=process
+                            )
 
-                st.session_state.prediction_result = result
-                st.session_state.prediction_inputs = inputs
-                st.session_state.prediction_targets = targets
-                st.session_state.prediction_evaluation = evaluation
-                st.session_state.prediction_recommendation = recommendation
+                        st.session_state.prediction_result = result
+                        st.session_state.prediction_inputs = inputs
+                        st.session_state.prediction_targets = targets
+                        st.session_state.prediction_evaluation = evaluation
+                        st.session_state.prediction_recommendation = recommendation
+                        append_quality_history(
+                            result,
+                            evaluation,
+                            recipe,
+                            inputs,
+                            workbook["Recipe_Master"],
+                            stage_defs,
+                        )
+
+                        if result.get("_error"):
+                            if not result.get("_out_of_range"):
+                                st.session_state.last_run_error = str(result["_error"])
+                            run_status.update(label="입력값 확인이 필요합니다.", state="error", expanded=False)
+                        else:
+                            run_status.update(label="예측 · 평가 · 추천이 완료됐습니다.", state="complete", expanded=False)
+                    except Exception as exc:
+                        st.session_state.prediction_result = None
+                        st.session_state.prediction_evaluation = None
+                        st.session_state.prediction_recommendation = None
+                        st.session_state.last_run_error = f"{type(exc).__name__}: {exc}"
+                        run_status.update(label="실행 중 오류가 발생했습니다.", state="error", expanded=False)
+                    finally:
+                        st.session_state.last_run_duration = perf_counter() - started_at
+                        st.session_state.prediction_running = False
 
             if submitted:
                 _run_prediction(allow_out_of_range=False)
+
+            if st.session_state.get("last_run_kind") == "evaluation":
+                if st.session_state.get("last_run_error"):
+                    st.error(f"실행 실패 · {st.session_state.last_run_error}")
+                    if st.button("↻ 예측 · 평가 · 추천 다시 시도", key="retry_evaluation_run"):
+                        _run_prediction(allow_out_of_range=False)
+                elif st.session_state.get("last_run_duration") is not None:
+                    st.caption(f"✅ 최근 품질 평가 완료 · {st.session_state.last_run_duration:.1f}초")
 
             result = st.session_state.prediction_result
             if result is not None:
@@ -791,6 +1221,8 @@ def main():
         show_quality_visualization(filtered_wafer)
         show_wafer_map(filtered_site)
         show_zone_analysis(filtered_site)
+
+    render_recent_quality_sidebar(recent_quality_slot)
 
 
 if __name__ == "__main__":
