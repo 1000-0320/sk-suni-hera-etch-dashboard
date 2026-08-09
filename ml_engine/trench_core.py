@@ -633,7 +633,7 @@ def _predict_quality_summaries(
             "Depth Uniformity": cd_depth["Depth_nm"]["uniformity_pct"],
             "Overall Spec Pass Rate": overall_hard_spec_pass_rate,
         }
-        target_composite_score_pct = compute_composite_score(quality_result, targets)["total"]
+        target_score_breakdown = compute_composite_score(quality_result, targets)
 
         summaries.append(
             {
@@ -648,7 +648,16 @@ def _predict_quality_summaries(
                 "predicted_mean_defect_severity": mean_defect_severity,
                 "worst_zone": worst_zone["zone"],
                 "worst_zone_quality_pct": worst_zone["zone_quality_pct"],
-                "target_composite_score_pct": target_composite_score_pct,
+                "target_composite_score_pct": target_score_breakdown["total"],
+                "predicted_top_cd_nm": quality_result["Top CD"],
+                "predicted_mid_cd_nm": quality_result["Mid CD"],
+                "predicted_bottom_cd_nm": quality_result["Bottom CD"],
+                "predicted_depth_nm": quality_result["Depth"],
+                "predicted_cd_uniformity_pct": quality_result["CD Uniformity"],
+                "predicted_depth_uniformity_pct": quality_result["Depth Uniformity"],
+                "predicted_pass_rate_score_pct": target_score_breakdown["pass_rate_score"],
+                "predicted_uniformity_score_pct": target_score_breakdown["uniformity_score"],
+                "predicted_target_proximity_score_pct": target_score_breakdown["target_proximity_score"],
             }
         )
     return summaries
@@ -710,7 +719,8 @@ def recommend_parameter_changes(
         "Depth Uniformity": baseline_wm["Depth_nm"]["uniformity_pct"],
         "Overall Spec Pass Rate": baseline_hard_pass_rate,
     }
-    baseline_target_score = compute_composite_score(baseline_quality_result, targets)["total"]
+    baseline_score_breakdown = compute_composite_score(baseline_quality_result, targets)
+    baseline_target_score = baseline_score_breakdown["total"]
     candidate_recipes: list[dict[str, float]] = []
     candidate_keys: list[tuple[str, float]] = []
     for parameter in PARAMETER_COLUMNS:
@@ -774,6 +784,15 @@ def recommend_parameter_changes(
                     "predicted_mean_spec_pass_probability_pct"
                 ],
                 "predicted_worst_zone": prediction["worst_zone"],
+                "predicted_top_cd": prediction["predicted_top_cd_nm"],
+                "predicted_mid_cd": prediction["predicted_mid_cd_nm"],
+                "predicted_bottom_cd": prediction["predicted_bottom_cd_nm"],
+                "predicted_depth": prediction["predicted_depth_nm"],
+                "predicted_cd_uniformity_pct": prediction["predicted_cd_uniformity_pct"],
+                "predicted_depth_uniformity_pct": prediction["predicted_depth_uniformity_pct"],
+                "predicted_pass_rate_score_pct": prediction["predicted_pass_rate_score_pct"],
+                "predicted_uniformity_score_pct": prediction["predicted_uniformity_score_pct"],
+                "predicted_target_proximity_score_pct": prediction["predicted_target_proximity_score_pct"],
             }
         )
 
@@ -904,6 +923,15 @@ def recommend_parameter_changes(
         "baseline_mean_spec_pass_probability_pct": baseline_spec_probability,
         "baseline_predicted_total_defect_count": baseline_defect_count,
         "baseline_predicted_mean_defect_severity": baseline_severity,
+        "baseline_top_cd": baseline_quality_result["Top CD"],
+        "baseline_mid_cd": baseline_quality_result["Mid CD"],
+        "baseline_bottom_cd": baseline_quality_result["Bottom CD"],
+        "baseline_depth": baseline_quality_result["Depth"],
+        "baseline_cd_uniformity_pct": baseline_quality_result["CD Uniformity"],
+        "baseline_depth_uniformity_pct": baseline_quality_result["Depth Uniformity"],
+        "baseline_pass_rate_score_pct": baseline_score_breakdown["pass_rate_score"],
+        "baseline_uniformity_score_pct": baseline_score_breakdown["uniformity_score"],
+        "baseline_target_proximity_score_pct": baseline_score_breakdown["target_proximity_score"],
         "recommendations": selected,
         "rev15_completion_recommendations": rev15_completion,
         "exploratory_tradeoffs": exploratory_tradeoffs[:top_n],

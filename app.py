@@ -22,6 +22,8 @@ from app_config import APP_VERSION, DEPLOYMENT_DATE, get_auth_mode_label
 from model import (
     predict, compute_composite_score, evaluate_against_target, score_recipe_versions,
     recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
+    format_parameter_label, generate_recommendation_reason,
+    apply_recommended_changes, build_combined_recipe_table,
 )
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
@@ -40,6 +42,8 @@ from charts import (
     build_cd_trend_chart, build_depth_trend_chart,
     build_cd_uniformity_trend_chart, build_depth_uniformity_trend_chart,
     build_pass_rate_trend_chart, build_particle_chart,
+    build_rev_cd_trend_chart, build_rev_depth_trend_chart,
+    build_rev_uniformity_trend_chart, build_rev_pass_rate_chart, build_rev_defect_chart,
     build_wafer_map, build_wafer_profile_chart, build_recipe_score_chart,
     build_zone_cd_chart, build_zone_depth_chart, build_zone_spread_chart,
     build_zone_pass_rate_chart, build_zone_defect_chart,
@@ -78,6 +82,7 @@ def init_session_state():
         "prediction_recommendation": None,
         "target_mode_baseline": None,
         "target_mode_suggestion": None,
+        "target_mode_combo": None,
         "quality_history": [],
         "prediction_running": False,
         "last_run_duration": None,
@@ -206,6 +211,7 @@ def create_process_selector():
         st.session_state.prediction_recommendation = None
         st.session_state.target_mode_baseline = None
         st.session_state.target_mode_suggestion = None
+        st.session_state.target_mode_combo = None
 
 
 # ==============================================================================
@@ -675,6 +681,25 @@ def show_prediction(result: dict):
 
 
 # ==============================================================================
+# Output A-1. 목표 대비 진단 (목표 품질 모드 전용)
+# ==============================================================================
+def show_target_diagnosis(baseline_result: dict, targets: dict):
+    """현재 Recipe 예측을 목표 품질과 비교해 핵심 미달 항목을 요약한다."""
+    evaluation = evaluate_against_target(baseline_result, targets)
+    failed_items = [name for name, satisfied in evaluation["satisfied"].items() if not satisfied]
+    issue_text = " · ".join(failed_items) if failed_items else "모든 목표 기준 충족"
+
+    st.markdown("<div class='section-title'>목표 대비 진단</div>", unsafe_allow_html=True)
+    columns = st.columns(3)
+    with columns[0]:
+        render_score_hero(evaluation["score"]["total"], label="목표 대비 종합점수")
+    with columns[1]:
+        render_summary_card("주요 미달 항목", issue_text)
+    with columns[2]:
+        render_summary_card("예측상 취약 Zone", baseline_result.get("_worst_zone", "—"))
+
+
+# ==============================================================================
 # Output B. 목표 대비 Recipe 평가
 # ==============================================================================
 def show_target_evaluation(evaluation: dict):
@@ -787,9 +812,12 @@ def show_comparison(current_result: dict, current_score: dict, recommendation: d
 # ==============================================================================
 # Output E. 파라미터별 조정 제안 (AI 추천 — Recipe 단위가 아니라 파라미터 단위)
 # ==============================================================================
-def show_parameter_recommendations(suggestion: dict):
-    st.markdown("<div class='section-title'>파라미터별 조정 제안 (AI 추천)</div>", unsafe_allow_html=True)
-    st.caption("지금 입력한 조건을 출발점으로, 파라미터를 하나씩 바꿔가며 목표 품질에 가장 가까워지는 방향을 찾았습니다 (관측된 값 범위 내에서만 탐색).")
+def show_parameter_recommendations(suggestion: dict, targets: dict):
+    st.markdown("<div class='section-title'>파라미터별 조정 제안</div>", unsafe_allow_html=True)
+    st.caption(
+        "입력한 조건을 출발점으로 파라미터를 하나씩 바꾸며 목표 품질에 가까워지는 방향을 찾았습니다. "
+        "추천 이유는 기존 품질 점수의 예측 전후 변화를 설명한 결과입니다."
+    )
 
     if suggestion is None:
         return
@@ -797,25 +825,198 @@ def show_parameter_recommendations(suggestion: dict):
         st.error(f"추천을 계산할 수 없습니다: {suggestion['error']}")
         return
 
-    recs = suggestion.get("recommendations") or []
-    if not recs:
-        st.info("현재 조건에서 더 좋아질 수 있는 파라미터 조정을 찾지 못했습니다 (이미 관측 범위 안에서는 최선에 가깝습니다).")
+    recommendations = suggestion.get("recommendations") or []
+    if not recommendations:
+        st.info("현재 조건에서 더 좋아질 수 있는 파라미터 조정을 찾지 못했습니다.")
         return
 
     direction_kr = {"increase": "▲ 증가", "decrease": "▼ 감소"}
+    top = recommendations[0]
+    st.markdown(f"**추천 조정 {len(recommendations)}건**")
+    st.caption(
+        f"가장 큰 개선 후보 · {format_parameter_label(top['parameter'])} "
+        f"{direction_kr.get(top['direction'], top['direction'])}"
+    )
+
     rows = []
-    for r in recs:
+    for rank, recommendation in enumerate(recommendations, start=1):
+        try:
+            reason = generate_recommendation_reason(suggestion, recommendation, targets)
+        except (KeyError, TypeError, ValueError):
+            reason = "목표 품질 점수 개선"
         rows.append({
-            "Parameter": r["parameter"],
-            "방향": direction_kr.get(r["direction"], r["direction"]),
-            "현재값 → 제안값": f"{r['current']:g} → {r['proposed']:g}",
-            "목표 대비 점수 변화": f"{r['target_composite_score_gain_pct_point']:+.2f}점",
-            "Worst Zone 변화": f"{r['worst_zone_quality_gain_pct_point']:+.2f}점",
+            "순위": rank,
+            "Parameter": format_parameter_label(recommendation["parameter"]),
+            "방향": direction_kr.get(recommendation["direction"], recommendation["direction"]),
+            "현재값": float(recommendation["current"]),
+            "제안값": float(recommendation["proposed"]),
+            "목표점수 개선": float(recommendation["target_composite_score_gain_pct_point"]),
+            "추천 이유": reason,
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    display_df = pd.DataFrame(rows)
+
+    def style_recommendation_row(row):
+        base = "background-color:rgba(229,72,59,0.05);" if row["순위"] <= 3 else ""
+        styles = [base] * len(row)
+        column_index = {name: index for index, name in enumerate(row.index)}
+        styles[column_index["제안값"]] = base + "color:#d83f33;background-color:#fff0e8;font-weight:700;"
+        if row["목표점수 개선"] > 0:
+            styles[column_index["목표점수 개선"]] = base + "color:#37835b;font-weight:700;"
+        return styles
+
+    styled = (
+        display_df.style
+        .format({"순위": "{:d}", "현재값": "{:g}", "제안값": "{:g}", "목표점수 개선": "{:+.2f}점"})
+        .apply(style_recommendation_row, axis=1)
+        .hide(axis="index")
+    )
+    st.dataframe(styled, use_container_width=True, hide_index=True)
     st.caption(
         f"출발점 점수 {suggestion['baseline_target_score_pct']:.1f}점 · "
-        "One-Factor-at-a-Time(파라미터 하나씩 변경) 스크리닝 · 실제 적용 전 검증 필요"
+        "각 행은 다른 조건을 유지한 One-Factor-at-a-Time 결과이며, 여러 변경안은 아래에서 함께 재검증합니다."
+    )
+
+
+def show_combined_recipe_section(
+    baseline_inputs: dict,
+    baseline_result: dict,
+    suggestion: dict,
+    targets: dict,
+    stage_defs: list,
+    process: str,
+    workbook: dict,
+):
+    """상위 추천안을 동시에 적용하고 기존 predict()로 조합 결과를 다시 검증한다."""
+    recommendations = (suggestion or {}).get("recommendations") or []
+    if not recommendations:
+        return
+
+    recommendation_count = len(recommendations)
+    target_signature = tuple(sorted((key, float(value)) for key, value in targets.items()))
+
+    def build_combo(allow_out_of_range: bool = False):
+        applied_inputs, changed_parameters = apply_recommended_changes(baseline_inputs, recommendations)
+        with st.status("추천 변경안 조합을 다시 예측하는 중...", expanded=False) as combo_status:
+            combo_result = predict(
+                applied_inputs,
+                workbook["Wafer_Summary"],
+                workbook["Recipe_Master"],
+                process=process,
+                allow_out_of_range=allow_out_of_range,
+            )
+            if combo_result.get("_error"):
+                combo_status.update(label="조합 Recipe 확인이 필요합니다.", state="error", expanded=False)
+            else:
+                combo_status.update(label="조합 Recipe 재예측이 완료됐습니다.", state="complete", expanded=False)
+        st.session_state.target_mode_combo = {
+            "process": process,
+            "equipment": baseline_inputs.get("equipment"),
+            "chamber": baseline_inputs.get("chamber"),
+            "base_recipe": baseline_inputs.get("recipe"),
+            "target_signature": target_signature,
+            "applied_inputs": applied_inputs,
+            "changed_parameters": changed_parameters,
+            "combo_result": combo_result,
+            "change_count": recommendation_count,
+        }
+
+    if st.button(
+        f"상위 {recommendation_count}개 변경안 조합 검증 →",
+        type="primary",
+        use_container_width=True,
+        key="build_combined_recipe",
+    ):
+        build_combo(allow_out_of_range=False)
+
+    combo = st.session_state.get("target_mode_combo")
+    expected_state = (
+        combo is not None
+        and combo.get("process") == process
+        and combo.get("equipment") == baseline_inputs.get("equipment")
+        and combo.get("chamber") == baseline_inputs.get("chamber")
+        and combo.get("base_recipe") == baseline_inputs.get("recipe")
+        and combo.get("target_signature") == target_signature
+    )
+    if not expected_state:
+        return
+
+    combo_result = combo["combo_result"]
+    if combo_result.get("_out_of_range"):
+        st.warning(f"⚠️ {combo_result['_error']}")
+        st.caption("학습 데이터 범위를 벗어난 조합이라 예측 신뢰도가 낮을 수 있습니다.")
+        if st.button("그래도 이 조합으로 실행", key="force_out_of_range_combo"):
+            build_combo(allow_out_of_range=True)
+            st.rerun()
+        return
+    if combo_result.get("_error"):
+        st.error(f"조합 Recipe를 예측할 수 없습니다: {combo_result['_error']}")
+        return
+
+    st.markdown("---")
+    st.markdown("<div class='section-title'>추천 변경안 적용 Recipe</div>", unsafe_allow_html=True)
+    st.caption(
+        f"기준 Recipe · {combo['base_recipe']} | 변경 Parameter · {combo['change_count']}개 | "
+        "추천안들을 동시에 적용한 뒤 다시 예측한 결과입니다."
+    )
+
+    table_df = pd.DataFrame(build_combined_recipe_table(baseline_inputs, combo["applied_inputs"], stage_defs))
+
+    def style_combo_row(row):
+        styles = [""] * len(row)
+        if abs(row["기준 Recipe"] - row["추천 적용값"]) > 1e-9:
+            column_index = {name: index for index, name in enumerate(row.index)}
+            styles[column_index["추천 적용값"]] = "color:#d83f33;background-color:#fff0e8;font-weight:700;"
+        return styles
+
+    styled_table = (
+        table_df.style
+        .format({"기준 Recipe": "{:g}", "추천 적용값": "{:g}"})
+        .apply(style_combo_row, axis=1)
+        .hide(axis="index")
+    )
+    st.dataframe(styled_table, use_container_width=True, hide_index=True)
+
+    baseline_evaluation = evaluate_against_target(baseline_result, targets)
+    combo_evaluation = evaluate_against_target(combo_result, targets)
+    comparison_rows = [
+        {
+            "품질 항목": "목표 대비 종합점수",
+            "현재 Recipe": baseline_evaluation["score"]["total"],
+            "변경안 적용 Recipe": combo_evaluation["score"]["total"],
+            "변화": combo_evaluation["score"]["total"] - baseline_evaluation["score"]["total"],
+        },
+        {
+            "품질 항목": "Overall Pass Rate [%]",
+            "현재 Recipe": baseline_result["Overall Spec Pass Rate"],
+            "변경안 적용 Recipe": combo_result["Overall Spec Pass Rate"],
+            "변화": combo_result["Overall Spec Pass Rate"] - baseline_result["Overall Spec Pass Rate"],
+        },
+        {
+            "품질 항목": "CD Uniformity [%]",
+            "현재 Recipe": baseline_result["CD Uniformity"],
+            "변경안 적용 Recipe": combo_result["CD Uniformity"],
+            "변화": combo_result["CD Uniformity"] - baseline_result["CD Uniformity"],
+        },
+        {
+            "품질 항목": "Depth Uniformity [%]",
+            "현재 Recipe": baseline_result["Depth Uniformity"],
+            "변경안 적용 Recipe": combo_result["Depth Uniformity"],
+            "변화": combo_result["Depth Uniformity"] - baseline_result["Depth Uniformity"],
+        },
+        {
+            "품질 항목": "Particle 발생 확률 [%]",
+            "현재 Recipe": baseline_result["Particle Probability"],
+            "변경안 적용 Recipe": combo_result["Particle Probability"],
+            "변화": combo_result["Particle Probability"] - baseline_result["Particle Probability"],
+        },
+    ]
+    comparison_df = pd.DataFrame(comparison_rows)
+    st.dataframe(
+        comparison_df.style.format(
+            {"현재 Recipe": "{:.1f}", "변경안 적용 Recipe": "{:.1f}", "변화": "{:+.1f}"}
+        ),
+        use_container_width=True,
+        hide_index=True,
     )
 
 
@@ -926,16 +1127,69 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict)
     st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
     if equipment_chamber_wafer.empty:
         st.info("선택한 조건에 해당하는 데이터가 없습니다.")
-        return
+        return pd.DataFrame()
 
     scoreboard = score_recipe_versions(equipment_chamber_wafer, targets)
     if scoreboard.empty:
         st.info("Rev 스코어를 계산할 데이터가 없습니다.")
-        return
+        return scoreboard
 
     table_cols = ["Recipe", "종합 점수", "Wafer 수", "Top CD", "Mid CD", "Bottom CD", "Depth", "Overall Spec Pass Rate"]
     st.dataframe(scoreboard[table_cols].round(1), use_container_width=True, hide_index=True)
     st.plotly_chart(build_recipe_score_chart(scoreboard), use_container_width=True)
+    return scoreboard
+
+
+def show_rev_quality_trends(
+    equipment_chamber_wafer: pd.DataFrame,
+    scoreboard: pd.DataFrame,
+    recipe_df: pd.DataFrame,
+):
+    """현재 Equipment/Chamber의 전체 Recipe를 Rev 순서로 집계해 비교한다."""
+    render_dashboard_section_title("Rev별 품질 변화", "quality")
+    st.caption(
+        "선택한 Equipment/Chamber의 실제 Wafer 결과를 Rev별로 집계했습니다. "
+        "위 Recipe 필터와 관계없이 전체 Rev의 변화 방향을 비교합니다."
+    )
+    if equipment_chamber_wafer.empty or scoreboard is None or scoreboard.empty:
+        st.info("Rev별 품질 변화를 표시할 데이터가 없습니다.")
+        return
+
+    recipe_order = ordered_recipe_versions(
+        recipe_df,
+        equipment_chamber_wafer["Recipe_Version"].unique(),
+    )
+    if not recipe_order:
+        st.info("Rev별 품질 변화를 표시할 Recipe가 없습니다.")
+        return
+
+    rev_scoreboard = scoreboard.set_index("Recipe").reindex(recipe_order).dropna(how="all").reset_index()
+    particle_rows = []
+    for recipe_version in rev_scoreboard["Recipe"]:
+        group = equipment_chamber_wafer[
+            equipment_chamber_wafer["Recipe_Version"] == recipe_version
+        ]
+        particle_rows.append({
+            "Recipe": recipe_version,
+            "평균 Defect Count": float(group["Total_Defect_Count"].mean()),
+            "Particle 발생 Wafer 수": int((group["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).sum()),
+            "Wafer 수": int(group["Wafer_ID"].nunique()) if "Wafer_ID" in group.columns else len(group),
+        })
+    rev_particle_df = pd.DataFrame(particle_rows)
+
+    row1 = st.columns(2, gap="large")
+    with row1[0]:
+        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard), use_container_width=True)
+    with row1[1]:
+        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard), use_container_width=True)
+
+    row2 = st.columns(2, gap="large")
+    with row2[0]:
+        st.plotly_chart(build_rev_uniformity_trend_chart(rev_scoreboard), use_container_width=True)
+    with row2[1]:
+        st.plotly_chart(build_rev_pass_rate_chart(rev_scoreboard), use_container_width=True)
+
+    st.plotly_chart(build_rev_defect_chart(rev_particle_df), use_container_width=True)
 
 
 # ==============================================================================
@@ -1060,6 +1314,7 @@ def main():
                 st.session_state.prediction_running = True
                 st.session_state.last_run_error = None
                 st.session_state.last_run_kind = "target"
+                st.session_state.target_mode_combo = None
                 with st.status("변경점 추천을 준비하는 중...", expanded=True) as run_status:
                     try:
                         run_status.write("선택한 Recipe와 목표 품질을 확인하고 있습니다.")
@@ -1107,8 +1362,22 @@ def main():
                 st.markdown("---")
                 st.markdown(f"<div class='section-title'>'{recipe}' 기준 현재 예측 품질</div>", unsafe_allow_html=True)
                 show_prediction(baseline_result)
-                st.markdown("---")
-                show_parameter_recommendations(st.session_state.get("target_mode_suggestion"))
+                if not baseline_result.get("_error"):
+                    st.markdown("---")
+                    show_target_diagnosis(baseline_result, targets)
+                    st.markdown("---")
+                    suggestion = st.session_state.get("target_mode_suggestion")
+                    show_parameter_recommendations(suggestion, targets)
+                    st.markdown("---")
+                    show_combined_recipe_section(
+                        inputs,
+                        baseline_result,
+                        suggestion,
+                        targets,
+                        stage_defs,
+                        process,
+                        workbook,
+                    )
             else:
                 st.info("목표 품질을 확인하고 '변경점 추천 실행' 버튼을 눌러주세요.")
 
@@ -1216,7 +1485,9 @@ def main():
         st.markdown("---")
         show_process_summary(filtered_wafer)
         dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
-        show_recipe_scoreboard(equipment_chamber_wafer, dashboard_targets)
+        scoreboard = show_recipe_scoreboard(equipment_chamber_wafer, dashboard_targets)
+        st.markdown("---")
+        show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"])
         st.markdown("---")
         show_quality_visualization(filtered_wafer)
         show_wafer_map(filtered_site)

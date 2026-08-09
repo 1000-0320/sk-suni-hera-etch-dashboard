@@ -12,7 +12,7 @@ predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 
 import pandas as pd
 
 from ml_engine import isolation_core, trench_core
-from ml_engine.scoring import compute_composite_score
+from ml_engine.scoring import compute_composite_score, _proximity_score, _uniformity_score
 from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
 
 _CORES = {"isolation": isolation_core, "trench": trench_core}
@@ -42,6 +42,21 @@ def _app_key_for_param(param_col: str) -> str:
 
 def _recipe_from_inputs(inputs: dict, param_columns: list) -> dict:
     return {col: float(inputs.get(_app_key_for_param(col), 0.0)) for col in param_columns}
+
+
+def format_parameter_label(param_col: str) -> str:
+    """모델 파라미터 컬럼명을 Stage·항목·단위가 보이는 UI 라벨로 바꾼다."""
+    stage = param_col.split("_")[0]
+    if param_col.endswith("_Time_s"):
+        return f"{stage} Etch Time [s]"
+    if param_col.endswith("_RF_Bias_W"):
+        return f"{stage} RF Bias [W]"
+    if param_col.endswith("_Pressure_mT"):
+        return f"{stage} Pressure [mT]"
+    if param_col.endswith("_sccm"):
+        gas = param_col.split("_")[1]
+        return f"{stage} {gas} Flow [sccm]"
+    return param_col
 
 
 # ==============================================================================
@@ -299,6 +314,121 @@ def recommend_parameter_adjustments(inputs: dict, targets: dict, process: str = 
         )
     except ValueError as exc:
         return {"error": str(exc)}
+
+
+def generate_recommendation_reason(suggestion: dict, candidate: dict, targets: dict) -> str:
+    """기존 점수 함수로 예측 전후를 비교해 추천 이유를 짧게 설명한다.
+
+    추천 순위나 품질 공식은 변경하지 않고, 엔진이 이미 계산한 후보별 예측값을 설명에만 사용한다.
+    """
+    cd_signals = [
+        (
+            "Top CD",
+            _proximity_score(candidate["predicted_top_cd"], targets["target_top_cd"])
+            - _proximity_score(suggestion["baseline_top_cd"], targets["target_top_cd"]),
+        ),
+        (
+            "Mid CD",
+            _proximity_score(candidate["predicted_mid_cd"], targets["target_mid_cd"])
+            - _proximity_score(suggestion["baseline_mid_cd"], targets["target_mid_cd"]),
+        ),
+        (
+            "Bottom CD",
+            _proximity_score(candidate["predicted_bottom_cd"], targets["target_bottom_cd"])
+            - _proximity_score(suggestion["baseline_bottom_cd"], targets["target_bottom_cd"]),
+        ),
+    ]
+    depth_gain = (
+        _proximity_score(candidate["predicted_depth"], targets["target_depth"])
+        - _proximity_score(suggestion["baseline_depth"], targets["target_depth"])
+    )
+    cd_uniformity_gain = (
+        _uniformity_score(candidate["predicted_cd_uniformity_pct"], targets["max_cd_uniformity"])
+        - _uniformity_score(suggestion["baseline_cd_uniformity_pct"], targets["max_cd_uniformity"])
+    )
+    depth_uniformity_gain = (
+        _uniformity_score(candidate["predicted_depth_uniformity_pct"], targets["max_depth_uniformity"])
+        - _uniformity_score(suggestion["baseline_depth_uniformity_pct"], targets["max_depth_uniformity"])
+    )
+    pass_rate_gain = candidate["predicted_overall_spec_pass_rate_change_pct_point"]
+    spec_probability_gain = candidate["predicted_mean_spec_pass_probability_change_pct_point"]
+    defect_count_gain = -candidate["predicted_total_defect_count_change"]
+    defect_severity_gain = -candidate["predicted_mean_defect_severity_change"]
+
+    score_epsilon = 0.5
+    defect_epsilon = 0.05
+    best_cd_name, best_cd_gain = max(cd_signals, key=lambda signal: signal[1])
+    close_cd_names = [
+        name for name, gain in cd_signals
+        if gain > score_epsilon and gain >= best_cd_gain * 0.85
+    ]
+
+    primary_signals = []
+    if best_cd_gain > score_epsilon:
+        cd_label = "목표 CD 오차 감소" if len(close_cd_names) >= 2 else f"{best_cd_name} 목표 오차 감소"
+        primary_signals.append((best_cd_gain, cd_label))
+    if depth_gain > score_epsilon:
+        primary_signals.append((depth_gain, "Depth 목표 오차 감소"))
+    if cd_uniformity_gain > score_epsilon and depth_uniformity_gain > score_epsilon:
+        primary_signals.append((max(cd_uniformity_gain, depth_uniformity_gain), "Uniformity 개선"))
+    elif cd_uniformity_gain > score_epsilon:
+        primary_signals.append((cd_uniformity_gain, "CD Uniformity 개선"))
+    elif depth_uniformity_gain > score_epsilon:
+        primary_signals.append((depth_uniformity_gain, "Depth Uniformity 개선"))
+    if pass_rate_gain > score_epsilon:
+        primary_signals.append((pass_rate_gain, "Pass Rate 개선"))
+    if spec_probability_gain > score_epsilon:
+        primary_signals.append((spec_probability_gain, "Spec Pass 예측확률 상승"))
+
+    secondary_signals = []
+    if defect_count_gain > defect_epsilon:
+        secondary_signals.append((defect_count_gain, "Defect Count 감소"))
+    if defect_severity_gain > defect_epsilon:
+        secondary_signals.append((defect_severity_gain, "Defect Severity 감소"))
+
+    if not primary_signals:
+        secondary_signals.sort(key=lambda signal: signal[0], reverse=True)
+        return secondary_signals[0][1] if secondary_signals else "목표점수 소폭 개선"
+
+    primary_signals.sort(key=lambda signal: signal[0], reverse=True)
+    reasons = [primary_signals[0][1]]
+    remaining = sorted(primary_signals[1:] + secondary_signals, key=lambda signal: signal[0], reverse=True)
+    for _, label in remaining:
+        if label not in reasons:
+            reasons.append(label)
+            break
+    return " · ".join(reasons)
+
+
+def apply_recommended_changes(baseline_inputs: dict, recommendations: list) -> tuple[dict, set]:
+    """기준 입력값에 추천 후보들을 함께 적용해 조합 Recipe 입력값을 만든다."""
+    applied = dict(baseline_inputs)
+    changed = set()
+    for recommendation in recommendations:
+        parameter = recommendation["parameter"]
+        applied[_app_key_for_param(parameter)] = recommendation["proposed"]
+        changed.add(parameter)
+    return applied, changed
+
+
+def build_combined_recipe_table(current_inputs: dict, applied_inputs: dict, stage_defs: list) -> list:
+    """변경 여부와 관계없이 조합 Recipe의 전체 Stage 파라미터를 표 데이터로 만든다."""
+    rows = []
+    for stage in stage_defs:
+        raw_columns = [stage["time_col"], stage["bias_col"], stage["pressure_col"], *stage["gas_cols"]]
+        for raw_column in raw_columns:
+            app_key = _app_key_for_param(raw_column)
+            current_value = current_inputs.get(app_key)
+            applied_value = applied_inputs.get(app_key)
+            if current_value is None or applied_value is None:
+                continue
+            rows.append({
+                "Stage": stage["key"],
+                "Parameter": format_parameter_label(raw_column),
+                "기준 Recipe": float(current_value),
+                "추천 적용값": float(applied_value),
+            })
+    return rows
 
 
 def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recipe_master_df, stage_defs=None) -> list:
