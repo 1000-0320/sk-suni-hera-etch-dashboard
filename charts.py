@@ -346,11 +346,21 @@ def build_wafer_map(filtered_site_df, value_col: str, value_label: str):
         line=dict(color=COLORS["muted"], width=1.5), hoverinfo="skip", showlegend=False,
     ))
     fig.update_layout(
-        title=f"Wafer Map — {value_label} (선택 조건 평균)",
+        title=dict(
+            text=(
+                f"<b>{value_label}</b><br>"
+                f"<span style='font-size:0.72em;color:{COLORS['muted']}'>선택 조건 평균</span>"
+            ),
+            x=0.5,
+            xanchor="center",
+            y=0.97,
+            yanchor="top",
+            font=dict(size=18, color=COLORS["text_primary"]),
+        ),
         xaxis=dict(visible=False, range=[-1.15, 1.15], scaleanchor="y"),
         yaxis=dict(visible=False, range=[-1.15, 1.15]),
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        margin=dict(t=50, b=10, l=10, r=10), height=460,
+        margin=dict(t=74, b=10, l=10, r=10), height=460,
     )
     return fig
 
