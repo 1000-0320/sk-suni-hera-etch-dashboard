@@ -59,8 +59,8 @@ inject_custom_css()
 WAFER_MAP_METRICS = {
     "Top CD": "Top_CD_nm", "Mid CD": "Mid_CD_nm", "Bottom CD": "Bottom_CD_nm", "Depth": "Depth_nm",
 }
-TARGET_MODE_LABEL = "목표 품질 → 레시피 변경점 추천"
-DIRECT_MODE_LABEL = "레시피 조건 직접 입력 → 품질 평가"
+TARGET_MODE_LABEL = "목표품질 달성을 위한 레시피 변경점 추천"
+DIRECT_MODE_LABEL = "레시피 조건을 직접 입력하여 품질 평가"
 
 # 공정별 Before/After 단면 스키매틱 이미지 (멘토 피드백: 텍스트 카드 대신 그림으로 직관적 표현)
 PROCESS_SCHEMATIC_IMAGES = {
