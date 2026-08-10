@@ -28,6 +28,31 @@ def _status_colors_for_values(values, warn_th=90, good_th=95):
     return colors
 
 
+# 선택된 Rev를 형광펜으로 표시한 듯 눈에 띄게 강조하는 노란색 (라이트 배경 기준)
+_SELECTED_REV_HIGHLIGHT = "rgba(255, 224, 30, 0.75)"
+
+
+def _apply_selected_rev_xaxis_highlight(fig, categories, selected_rev: str | None, tickangle: int = -30):
+    """Rev(Recipe)별 x축 라벨을 직접 그려서, 선택된 Rev의 라벨에만 형광펜 배경을 입힌다.
+    기본 tick label을 끄고 그 자리에 annotation으로 대체하는 방식이라 카테고리별로 배경색을 다르게 줄 수 있다."""
+    if selected_rev is None or selected_rev not in set(categories):
+        return
+    fig.update_xaxes(showticklabels=False)
+    annotations = list(fig.layout.annotations or [])
+    for category in categories:
+        is_selected = category == selected_rev
+        annotations.append(dict(
+            x=category, xref="x", y=0, yref="paper", yshift=-12,
+            xanchor="center", yanchor="top", showarrow=False, align="center",
+            text=f"<b>{category}</b>" if is_selected else str(category),
+            textangle=tickangle,
+            font=dict(family=_FONT["family"], color=COLORS["text_primary"], size=13 if is_selected else 12),
+            bgcolor=_SELECTED_REV_HIGHLIGHT if is_selected else "rgba(0,0,0,0)",
+            borderpad=3,
+        ))
+    fig.update_layout(annotations=annotations)
+
+
 # ----------------------------------------------------------------------------
 # 1. 공정 예측 탭 차트
 # ----------------------------------------------------------------------------
@@ -195,14 +220,17 @@ def build_particle_chart(wafer_df):
 # ----------------------------------------------------------------------------
 # 2-1. Process Dashboard - Rev별 품질 변화 시각화
 # -----------------------------------------------------------------------------
-def build_rev_cd_trend_chart(rev_df):
+def build_rev_cd_trend_chart(rev_df, selected_rev: str | None = None):
     """Recipe(Rev)별 Top/Mid/Bottom CD 실측 평균을 비교한다."""
     fig = go.Figure()
+    marker_sizes = [11 if r == selected_rev else 7 for r in rev_df["Recipe"]]
+    marker_line_widths = [2 if r == selected_rev else 0 for r in rev_df["Recipe"]]
     columns = [("Top CD", "Top CD"), ("Mid CD", "Mid CD"), ("Bottom CD", "Bottom CD")]
     for (column, name), color in zip(columns, [COLORS["series1"], COLORS["series2"], COLORS["series3"]]):
         fig.add_trace(go.Scatter(
             x=rev_df["Recipe"], y=rev_df[column], mode="lines+markers",
-            name=name, line=dict(color=color, width=2), marker=dict(size=7),
+            name=name, line=dict(color=color, width=2),
+            marker=dict(size=marker_sizes, line=dict(color=COLORS["text_primary"], width=marker_line_widths)),
             customdata=rev_df["Wafer 수"],
             hovertemplate=f"%{{x}}<br>{name}: %{{y:.1f}} nm<br>Wafer 수: %{{customdata}}장<extra></extra>",
         ))
@@ -213,13 +241,16 @@ def build_rev_cd_trend_chart(rev_df):
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
+    _apply_selected_rev_xaxis_highlight(fig, rev_df["Recipe"].tolist(), selected_rev)
     return fig
 
 
-def build_rev_depth_trend_chart(rev_df):
+def build_rev_depth_trend_chart(rev_df, selected_rev: str | None = None):
     """Recipe(Rev)별 Depth 실측 평균을 비교한다."""
+    line_widths = [3 if r == selected_rev else 0 for r in rev_df["Recipe"]]
     fig = go.Figure(go.Bar(
-        x=rev_df["Recipe"], y=rev_df["Depth"], marker_color=COLORS["series1"],
+        x=rev_df["Recipe"], y=rev_df["Depth"],
+        marker=dict(color=COLORS["series1"], line=dict(color=COLORS["text_primary"], width=line_widths)),
         customdata=rev_df["Wafer 수"],
         hovertemplate="%{x}<br>Depth: %{y:.1f} nm<br>Wafer 수: %{customdata}장<extra></extra>",
     ))
@@ -230,21 +261,26 @@ def build_rev_depth_trend_chart(rev_df):
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
+    _apply_selected_rev_xaxis_highlight(fig, rev_df["Recipe"].tolist(), selected_rev)
     return fig
 
 
-def build_rev_uniformity_trend_chart(rev_df):
+def build_rev_uniformity_trend_chart(rev_df, selected_rev: str | None = None):
     """Recipe(Rev)별 CD/Depth Uniformity 실측 평균을 함께 비교한다."""
     fig = go.Figure()
+    marker_sizes = [11 if r == selected_rev else 7 for r in rev_df["Recipe"]]
+    marker_line_widths = [2 if r == selected_rev else 0 for r in rev_df["Recipe"]]
     fig.add_trace(go.Scatter(
         x=rev_df["Recipe"], y=rev_df["CD Uniformity"], mode="lines+markers",
-        name="CD Uniformity", line=dict(color=COLORS["series1"], width=2), marker=dict(size=7),
+        name="CD Uniformity", line=dict(color=COLORS["series1"], width=2),
+        marker=dict(size=marker_sizes, line=dict(color=COLORS["text_primary"], width=marker_line_widths)),
         customdata=rev_df["Wafer 수"],
         hovertemplate="%{x}<br>CD Uniformity: %{y:.2f}%<br>Wafer 수: %{customdata}장<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=rev_df["Recipe"], y=rev_df["Depth Uniformity"], mode="lines+markers",
-        name="Depth Uniformity", line=dict(color=COLORS["series2"], width=2), marker=dict(size=7),
+        name="Depth Uniformity", line=dict(color=COLORS["series2"], width=2),
+        marker=dict(size=marker_sizes, line=dict(color=COLORS["text_primary"], width=marker_line_widths)),
         customdata=rev_df["Wafer 수"],
         hovertemplate="%{x}<br>Depth Uniformity: %{y:.2f}%<br>Wafer 수: %{customdata}장<extra></extra>",
     ))
@@ -255,14 +291,17 @@ def build_rev_uniformity_trend_chart(rev_df):
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
+    _apply_selected_rev_xaxis_highlight(fig, rev_df["Recipe"].tolist(), selected_rev)
     return fig
 
 
-def build_rev_pass_rate_chart(rev_df):
+def build_rev_pass_rate_chart(rev_df, selected_rev: str | None = None):
     """Recipe(Rev)별 Overall Spec Pass Rate 실측 평균을 비교한다."""
     colors = _status_colors_for_values(rev_df["Overall Spec Pass Rate"])
+    line_widths = [3 if r == selected_rev else 0 for r in rev_df["Recipe"]]
     fig = go.Figure(go.Bar(
-        x=rev_df["Recipe"], y=rev_df["Overall Spec Pass Rate"], marker_color=colors,
+        x=rev_df["Recipe"], y=rev_df["Overall Spec Pass Rate"],
+        marker=dict(color=colors, line=dict(color=COLORS["text_primary"], width=line_widths)),
         customdata=rev_df["Wafer 수"],
         hovertemplate="%{x}<br>Pass Rate: %{y:.1f}%<br>Wafer 수: %{customdata}장<extra></extra>",
     ))
@@ -281,17 +320,20 @@ def build_rev_pass_rate_chart(rev_df):
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 100])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
+    _apply_selected_rev_xaxis_highlight(fig, rev_df["Recipe"].tolist(), selected_rev)
     return fig
 
 
-def build_rev_defect_chart(rev_defect_df):
+def build_rev_defect_chart(rev_defect_df, selected_rev: str | None = None):
     """Recipe(Rev)별 Particle 기준 초과 Wafer 수와 평균 Defect Count를 보여준다."""
     colors = [
         COLORS["chart_critical"] if value > 0 else COLORS["chart_good"]
         for value in rev_defect_df["Particle 발생 Wafer 수"]
     ]
+    line_widths = [3 if r == selected_rev else 0 for r in rev_defect_df["Recipe"]]
     fig = go.Figure(go.Bar(
-        x=rev_defect_df["Recipe"], y=rev_defect_df["Particle 발생 Wafer 수"], marker_color=colors,
+        x=rev_defect_df["Recipe"], y=rev_defect_df["Particle 발생 Wafer 수"],
+        marker=dict(color=colors, line=dict(color=COLORS["text_primary"], width=line_widths)),
         customdata=np.stack([rev_defect_df["Wafer 수"], rev_defect_df["평균 Defect Count"]], axis=-1),
         hovertemplate=(
             "%{x}<br>Particle 발생 Wafer 수: %{y} / %{customdata[0]}장"
@@ -305,6 +347,7 @@ def build_rev_defect_chart(rev_defect_df):
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"], rangemode="tozero", dtick=1)
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
+    _apply_selected_rev_xaxis_highlight(fig, rev_defect_df["Recipe"].tolist(), selected_rev)
     return fig
 
 
@@ -517,11 +560,14 @@ def build_wafer_profile_chart(filtered_site_df, value_col: str, value_label: str
     return fig
 
 
-def build_recipe_score_chart(scoreboard_df: pd.DataFrame):
-    """Recipe(Rev)별 종합 품질 점수 막대그래프 — 실측 데이터 기반, 점수 높은 순 정렬."""
+def build_recipe_score_chart(scoreboard_df: pd.DataFrame, selected_rev: str | None = None):
+    """Recipe(Rev)별 종합 품질 점수 막대그래프 — 실측 데이터 기반, 점수 높은 순 정렬.
+    selected_rev가 주어지면 해당 막대만 굵은 테두리로 강조해 대시보드에서 선택 상태를 시각적으로 알 수 있게 한다."""
     colors = _status_colors_for_values(scoreboard_df["종합 점수"], warn_th=50, good_th=80)
+    line_widths = [3 if recipe == selected_rev else 0 for recipe in scoreboard_df["Recipe"]]
     fig = go.Figure(go.Bar(
-        x=scoreboard_df["Recipe"], y=scoreboard_df["종합 점수"], marker_color=colors,
+        x=scoreboard_df["Recipe"], y=scoreboard_df["종합 점수"],
+        marker=dict(color=colors, line=dict(color=COLORS["text_primary"], width=line_widths)),
         text=[f"{v:.1f}" for v in scoreboard_df["종합 점수"]], textposition="outside",
     ))
     fig.update_layout(
@@ -531,6 +577,7 @@ def build_recipe_score_chart(scoreboard_df: pd.DataFrame):
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 105])
     fig.update_xaxes(showgrid=False, tickangle=-45)
+    _apply_selected_rev_xaxis_highlight(fig, scoreboard_df["Recipe"].tolist(), selected_rev, tickangle=-45)
     return fig
 
 
@@ -640,4 +687,27 @@ def build_score_comparison_chart(current_score: float, recommended_score: float)
         margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 100])
+    return fig
+
+
+# ----------------------------------------------------------------------------
+# 6. Rev별 스코어링 표 — Recipe 비교/차이 드릴다운 (선택 Recipe vs 1위 vs 전체 평균)
+# ----------------------------------------------------------------------------
+def build_rev_comparison_chart(selected_recipe: str, selected_score: float,
+                                best_recipe: str, best_score: float, avg_score: float):
+    """스코어링 표에서 선택한 Recipe의 종합 점수를 1위 Recipe·전체 평균과 나란히 비교"""
+    is_best = selected_recipe == best_recipe
+    labels = [f"{selected_recipe} (선택)"] + ([] if is_best else [f"{best_recipe} (1위)"]) + ["전체 평균"]
+    values = [selected_score] + ([] if is_best else [best_score]) + [avg_score]
+    colors = [COLORS["accent"]] + ([] if is_best else [COLORS["chart_good"]]) + [COLORS["muted"]]
+    fig = go.Figure(go.Bar(
+        x=labels, y=values, marker_color=colors,
+        text=[f"{v:.1f}점" for v in values], textposition="outside",
+    ))
+    fig.update_layout(
+        title="종합 점수 비교 (선택 Recipe vs 1위 vs 전체 평균)", yaxis_title="점수",
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
+        margin=dict(t=50, b=30, l=30, r=20), height=340, showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLORS["gridline"], range=[0, 105])
     return fig

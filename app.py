@@ -51,7 +51,7 @@ from charts import (
     build_pass_rate_trend_chart, build_particle_chart,
     build_rev_cd_trend_chart, build_rev_depth_trend_chart,
     build_rev_uniformity_trend_chart, build_rev_pass_rate_chart, build_rev_defect_chart,
-    build_wafer_profile_chart, build_recipe_score_chart,
+    build_wafer_profile_chart, build_recipe_score_chart, build_rev_comparison_chart,
     build_zone_cd_chart, build_zone_depth_chart, build_zone_spread_chart,
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
@@ -1224,7 +1224,7 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict,
             "Overall Spec Pass Rate": st.column_config.NumberColumn("Overall Spec Pass Rate", format="%.1f"),
         },
     )
-    st.plotly_chart(build_recipe_score_chart(scoreboard), use_container_width=True)
+    st.plotly_chart(build_recipe_score_chart(scoreboard, selected_rev), use_container_width=True)
     return scoreboard, selected_rev
 
 
@@ -1247,10 +1247,54 @@ def show_dashboard_best_case(scoreboard: pd.DataFrame) -> None:
                 render_summary_card(label, value)
 
 
+# ==============================================================================
+# 2-4. Recipe 비교/차이 드릴다운 (멘토 피드백: 선택한 Recipe가 1위/평균 대비 얼마나 차이나는지)
+# ==============================================================================
+def show_recipe_comparison(scoreboard: pd.DataFrame, selected_rev: str | None) -> None:
+    """스코어링 표에서 선택한 Recipe를 1위 Recipe·전체 평균과 비교해 Δ를 보여준다.
+    scoreboard/selected_rev는 show_recipe_scoreboard()가 이미 계산해둔 값을 그대로 받아 쓴다."""
+    render_dashboard_section_title("Recipe 비교", "score", "blue")
+    if scoreboard is None or scoreboard.empty or selected_rev is None:
+        st.info("비교할 Recipe가 없습니다.")
+        return
+
+    selected_row = scoreboard[scoreboard["Recipe"] == selected_rev].iloc[0]
+    best_row = scoreboard.iloc[0]
+    compare_cols = ["종합 점수", "Overall Spec Pass Rate", "CD Uniformity", "Depth Uniformity"]
+    avg_row = scoreboard[compare_cols].mean()
+
+    st.caption(f"선택한 Recipe **{selected_rev}**를 1위 Recipe **{best_row['Recipe']}** 및 전체 평균과 비교합니다.")
+
+    metrics = [
+        ("종합 점수", "종합 점수", "점"),
+        ("Pass Rate", "Overall Spec Pass Rate", "%"),
+        ("CD Uniformity", "CD Uniformity", "%"),
+        ("Depth Uniformity", "Depth Uniformity", "%"),
+    ]
+    rows = [
+        {
+            "품질 항목": label,
+            "선택 Recipe": f"{selected_row[col]:.2f}{unit}",
+            "1위 대비 Δ": f"{selected_row[col] - best_row[col]:+.2f}{unit}",
+            "전체 평균 대비 Δ": f"{selected_row[col] - avg_row[col]:+.2f}{unit}",
+        }
+        for label, col, unit in metrics
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.plotly_chart(
+        build_rev_comparison_chart(
+            selected_rev, selected_row["종합 점수"], best_row["Recipe"], best_row["종합 점수"], avg_row["종합 점수"],
+        ),
+        use_container_width=True,
+    )
+
+
 def show_rev_quality_trends(
     equipment_chamber_wafer: pd.DataFrame,
     scoreboard: pd.DataFrame,
     recipe_df: pd.DataFrame,
+    selected_rev: str | None = None,
 ):
     """현재 Equipment/Chamber의 전체 Recipe를 Rev 순서로 집계해 비교한다."""
     render_dashboard_section_title("Rev별 품질 변화", "quality")
@@ -1286,17 +1330,17 @@ def show_rev_quality_trends(
 
     row1 = st.columns(2, gap="large")
     with row1[0]:
-        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard), use_container_width=True)
+        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
     with row1[1]:
-        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard), use_container_width=True)
+        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
 
     row2 = st.columns(2, gap="large")
     with row2[0]:
-        st.plotly_chart(build_rev_uniformity_trend_chart(rev_scoreboard), use_container_width=True)
+        st.plotly_chart(build_rev_uniformity_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
     with row2[1]:
-        st.plotly_chart(build_rev_pass_rate_chart(rev_scoreboard), use_container_width=True)
+        st.plotly_chart(build_rev_pass_rate_chart(rev_scoreboard, selected_rev), use_container_width=True)
 
-    st.plotly_chart(build_rev_defect_chart(rev_particle_df), use_container_width=True)
+    st.plotly_chart(build_rev_defect_chart(rev_particle_df, selected_rev), use_container_width=True)
 
 
 # ==============================================================================
@@ -1992,11 +2036,14 @@ def main():
             zone_summary_preview = get_zone_summary(filtered_site) if not filtered_site.empty else None
             show_dashboard_ai_analysis(filtered_wafer, zone_summary_preview)
 
+        with st.expander("Recipe 비교 자세히 보기", expanded=False):
+            show_recipe_comparison(scoreboard, selected_rev)
+
         with st.expander("Process Summary 자세히 보기", expanded=False):
             show_process_summary(filtered_wafer)
 
         with st.expander("품질 결과 시각화 자세히 보기 (Rev별 품질 변화 · Wafer 단위 추이)", expanded=False):
-            show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"])
+            show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"], selected_rev)
             show_quality_visualization(filtered_wafer)
 
         with st.expander("Wafer Profile 자세히 보기", expanded=False):
