@@ -7,6 +7,8 @@ Etch AI Decision Support System - 디자인/스타일 모듈
 good/warning/critical은 품질 판독을 위해 테마와 무관한 의미 색상으로 유지한다.
 """
 
+from __future__ import annotations
+
 import streamlit as st
 
 # ----------------------------------------------------------------------------
@@ -634,6 +636,26 @@ def inject_custom_css():
             stroke-width: 1.05;
         }}
 
+        /* Process Dashboard — Best Case 카드 */
+        .dashboard-best-badge {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            background: {COLORS['good']};
+            color: #ffffff;
+            border-radius: 999px;
+            padding: 0.22rem 0.75rem;
+            font-size: 0.72rem;
+            font-weight: 850;
+            letter-spacing: 0.06em;
+        }}
+        .dashboard-best-recipe {{
+            margin-left: 0.6rem;
+            color: {COLORS['text_primary']};
+            font-size: 1.2rem;
+            font-weight: 850;
+        }}
+
         div[data-testid="stExpander"] {{
             background-color: {COLORS['surface']};
             border: 1px solid {COLORS['gridline']};
@@ -707,6 +729,93 @@ def inject_custom_css():
         .subscore-card .label {{ color: {COLORS['muted']}; font-size: 0.75rem; font-weight: 700; }}
         .subscore-card .value {{ font-size: 1.3rem; font-weight: 800; margin-top: 0.15rem; }}
         .subscore-card .weight {{ color: {COLORS['muted']}; font-size: 0.7rem; }}
+
+        /* Parameter History — Revision 카드 */
+        .history-card {{
+            background-color: {COLORS['surface']};
+            border-left: 4px solid {COLORS['accent']};
+            border-radius: 18px;
+            padding: 1.1rem 1.3rem;
+            margin-bottom: 0.6rem;
+            box-shadow: 0 2px 10px {COLORS['shadow_card']};
+        }}
+        .history-card-head {{
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+        }}
+        .history-card-head .revision {{
+            color: {COLORS['text_primary']};
+            font-size: 1.15rem;
+            font-weight: 800;
+        }}
+        .history-tag {{
+            display: inline-block;
+            color: {COLORS['accent']};
+            background: {COLORS['accent_soft']};
+            border-radius: 999px;
+            padding: 0.18rem 0.62rem;
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+        }}
+        .history-card-notes {{
+            color: {COLORS['text_primary']};
+            font-size: 0.92rem;
+            line-height: 1.55;
+            margin-top: 0.5rem;
+        }}
+        .history-param-list {{
+            color: {COLORS['text_secondary']};
+            font-size: 0.82rem;
+            line-height: 1.75;
+            margin-top: 0.45rem;
+        }}
+        .history-param-list .param-heading {{
+            color: {COLORS['muted']};
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }}
+        .history-card-footer {{
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+            flex-wrap: wrap;
+            margin-top: 0.7rem;
+            padding-top: 0.65rem;
+            border-top: 1px solid {COLORS['gridline']};
+            color: {COLORS['text_secondary']};
+            font-size: 0.82rem;
+            font-weight: 700;
+        }}
+        .history-card-footer .highlight {{ color: {COLORS['text_primary']}; font-weight: 800; }}
+        .history-empty {{
+            background-color: {COLORS['surface_soft']};
+            border: 1px dashed {COLORS['gridline']};
+            border-radius: 18px;
+            padding: 1.6rem;
+            text-align: center;
+            color: {COLORS['text_secondary']};
+            font-size: 0.95rem;
+            font-weight: 600;
+        }}
+        .history-detail-row {{
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.4rem 0;
+            border-bottom: 1px solid {COLORS['gridline']};
+            flex-wrap: wrap;
+        }}
+        .history-detail-row:last-child {{ border-bottom: none; }}
+        .history-detail-row .param-label {{ color: {COLORS['text_primary']}; font-weight: 800; font-size: 0.85rem; min-width: 11rem; }}
+        .history-detail-row .value-change {{ color: {COLORS['text_secondary']}; font-size: 0.85rem; }}
+        .history-detail-row .delta {{ font-weight: 800; font-size: 0.85rem; }}
+        .history-detail-row .delta.is-up {{ color: {COLORS['chart_critical']}; }}
+        .history-detail-row .delta.is-down {{ color: {COLORS['accent']}; }}
 
         div[data-testid="stMetricValue"] {{ color: {COLORS['text_primary']} !important; }}
 
@@ -808,6 +917,19 @@ def render_pill_card(label: str, ok: bool):
         """,
         unsafe_allow_html=True,
     )
+
+
+def history_tag_badge_html(tag: str | None) -> str:
+    """Change_Notes에서 추출한 변경 단계 태그(1차/최종/확정/완료/양산 후보)를 pill 뱃지 HTML로.
+    tag가 없으면 빈 문자열(호출부에서 그냥 이어붙이면 됨)."""
+    if not tag:
+        return ""
+    return f'<span class="history-tag">{tag}</span>'
+
+
+def dashboard_best_badge_html(recipe_label: str) -> str:
+    """Process Dashboard의 Best Case 카드용 뱃지. 색상뿐 아니라 "BEST" 문구로도 의미를 전달한다."""
+    return f'<span class="dashboard-best-badge">🏆 BEST</span><span class="dashboard-best-recipe">{recipe_label}</span>'
 
 
 # ----------------------------------------------------------------------------

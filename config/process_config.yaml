@@ -1,0 +1,15 @@
+# Parameter History 모드에서 사용하는 공정별 설정.
+#
+# Isolation/Trench는 Wafer_Summary의 Depth 원본 단위가 다르다(isolation=Angstrom, trench=nm).
+# data_utils._normalize_depth_units()가 로딩 시 항상 *_nm 컬럼을 보강해 두므로 두 공정 모두
+# 동일한 컬럼명을 쓰지만, 이 값을 history_utils.py에 하드코딩하지 않고 여기서 읽어오게 한다.
+# (다른 이유로 Depth 컬럼명이 달라지는 데이터셋이 들어와도 이 파일만 고치면 되도록)
+isolation:
+  depth_mean_col: Depth_Mean_nm
+  depth_std_col: Depth_Std_nm
+  depth_unit: nm
+
+trench:
+  depth_mean_col: Depth_Mean_nm
+  depth_std_col: Depth_Std_nm
+  depth_unit: nm

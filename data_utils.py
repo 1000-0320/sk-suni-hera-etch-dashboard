@@ -12,6 +12,8 @@ isolation은 Depth 원본 단위가 Angstrom(A)이라 로딩 시 nm으로 환산
 이후 로직(charts.py 포함)은 항상 *_nm 컬럼만 보면 되도록 통일한다.
 """
 
+from __future__ import annotations
+
 import os
 
 import numpy as np
@@ -350,6 +352,16 @@ def stage_inputs_from_recipe(recipe_master_df: pd.DataFrame, recipe_version: str
             if gas_col in row.index:
                 result[gas_col.lower()] = float(row[gas_col])
     return result
+
+
+def get_representative_chamber(wafer_df: pd.DataFrame, equipment: str) -> str | None:
+    """선택한 Equipment의 대표 Chamber를 하나 고른다 (모든 Chamber가 동일 조건이라는 가정).
+    Simulator 입력 패널(create_input_panel)이 쓰던 규칙(정렬 후 첫 Chamber)을 그대로 재사용해,
+    Process Dashboard도 같은 기준으로 대표 Chamber를 자동 결정한다."""
+    chamber_choices = sorted(wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].unique())
+    if not chamber_choices:
+        chamber_choices = sorted(wafer_df["Chamber_ID"].unique())
+    return chamber_choices[0] if chamber_choices else None
 
 
 def ordered_recipe_versions(recipe_df: pd.DataFrame, subset_values=None) -> list:

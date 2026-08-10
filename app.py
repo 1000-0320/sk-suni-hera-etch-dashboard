@@ -10,6 +10,8 @@ isolation / trench 두 공정을 선택할 수 있고, 학습된 RandomForest/XG
 실행: streamlit run app.py
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from html import escape
 from time import perf_counter
@@ -28,14 +30,16 @@ from model import (
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
     get_zone_summary, get_recipe_stage_table, stage_inputs_from_recipe,
-    ordered_recipe_versions, get_default_targets, PROCESS_STAGE_DEFS, PROCESS_LABELS,
+    ordered_recipe_versions, get_default_targets, get_representative_chamber,
+    PROCESS_STAGE_DEFS, PROCESS_LABELS,
     REQUIRED_SHEETS, PARTICLE_DEFECT_THRESHOLD,
 )
+from history_utils import PARAM_TYPE_LABELS, get_equipment_models, build_history_results
 from style import (
     inject_custom_css, render_metric_card, render_summary_card, render_status_badge,
     render_score_hero, render_subscore_card, render_pill_card,
     get_pass_rate_status, get_cd_uniformity_status, get_depth_uniformity_status, get_particle_status,
-    get_score_status, STATUS_META,
+    get_score_status, STATUS_META, history_tag_badge_html, dashboard_best_badge_html,
 )
 from charts import (
     build_cd_bar_chart, build_gauge_chart, build_variation_gauge,
@@ -504,10 +508,7 @@ def create_input_panel():
     b1, b2 = st.columns(2)
     with b1:
         equipment = st.selectbox("Equipment Model", sorted(wafer_df["Equipment_Model"].unique()), key=f"eq_{process}")
-    chamber_choices = sorted(
-        wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].unique()
-    ) or sorted(wafer_df["Chamber_ID"].unique())
-    chamber = chamber_choices[0]
+    chamber = get_representative_chamber(wafer_df, equipment)
     recipe_options = ordered_recipe_versions(recipe_df)
     with b2:
         recipe = st.selectbox("Recipe (참고용 베이스라인)", recipe_options, key=f"recipe_{process}")
@@ -1024,60 +1025,70 @@ def show_combined_recipe_section(
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
 def reset_process_dashboard_filters(process: str) -> None:
-    """Process Dashboard의 세 필터를 해당 공정 기본값으로 되돌린다."""
-    for key in (f"pd_equipment_{process}", f"pd_chamber_{process}", f"pd_recipe_{process}"):
+    """Process Dashboard의 Equipment 선택과 Rev 선택 상태를 해당 공정 기본값으로 되돌린다."""
+    for key in (f"pd_equipment_{process}", f"pd_selected_rev_{process}"):
         st.session_state.pop(key, None)
 
 
-def create_process_dashboard_selectors(workbook: dict, process: str):
-    st.markdown("### Process Dashboard 조건 선택")
+def create_process_dashboard_equipment_selector(workbook: dict, process: str):
+    """Equipment만 사용자가 선택하고, Chamber는 대표값을 자동 결정한다.
+    (멘토 피드백: 모든 Chamber가 동일 조건이라는 가정 — Simulator의 get_representative_chamber와 동일 규칙 재사용)"""
     wafer_df = workbook["Wafer_Summary"]
-    recipe_df = workbook["Recipe_Master"]
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        equipment = st.selectbox("Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}")
-    df1 = wafer_df[wafer_df["Equipment_Model"] == equipment]
-
-    with col2:
-        chamber_choices = sorted(df1["Chamber_ID"].unique()) or sorted(wafer_df["Chamber_ID"].unique())
-        chamber = st.selectbox("Chamber", chamber_choices, key=f"pd_chamber_{process}")
-    df2 = df1[df1["Chamber_ID"] == chamber]
-
-    with col3:
-        recipe_choices = ordered_recipe_versions(recipe_df, df2["Recipe_Version"].unique()) or ordered_recipe_versions(recipe_df)
-        recipe = st.selectbox("Recipe", recipe_choices, key=f"pd_recipe_{process}")
-
-    filtered_wafer = df2[df2["Recipe_Version"] == recipe]
-
-    site_df = workbook["Site_Level_Raw"]
-    filtered_site = site_df[
-        (site_df["Equipment_Model"] == equipment)
-        & (site_df["Chamber_ID"] == chamber)
-        & (site_df["Recipe_Version"] == recipe)
-    ]
-
-    context_col, reset_col = st.columns([5, 1], gap="small")
-    with context_col:
-        st.markdown(
-            f"""
-            <div class="dashboard-context-strip">
-                <span>ACTIVE VIEW</span>
-                <strong>{escape(PROCESS_LABELS[process])} · {escape(str(equipment))} · {escape(str(chamber))} · {escape(str(recipe))}</strong>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    col_eq, col_reset = st.columns([2, 1], gap="small")
+    with col_eq:
+        equipment = st.selectbox(
+            "Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}",
         )
-    with reset_col:
+    with col_reset:
         st.button(
-            "↺ 필터 초기화",
+            "↺ 초기화",
             key=f"reset_pd_filters_{process}",
             on_click=reset_process_dashboard_filters,
             args=(process,),
             use_container_width=True,
         )
 
-    return filtered_wafer, filtered_site, df2
+    chamber = get_representative_chamber(wafer_df, equipment)
+    chamber_text = escape(str(chamber)) if chamber is not None else "—"
+    st.markdown(
+        f"""
+        <div class="dashboard-context-strip">
+            <span>ACTIVE VIEW</span>
+            <strong>{escape(PROCESS_LABELS[process])} · {escape(str(equipment))} · Chamber {chamber_text} (자동)</strong>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if chamber is None:
+        equipment_chamber_wafer = wafer_df.iloc[0:0]
+    else:
+        equipment_chamber_wafer = wafer_df[
+            (wafer_df["Equipment_Model"] == equipment) & (wafer_df["Chamber_ID"] == chamber)
+        ]
+
+    return equipment, chamber, equipment_chamber_wafer
+
+
+def filter_dashboard_by_rev(
+    workbook: dict, equipment_chamber_wafer: pd.DataFrame,
+    equipment: str, chamber: str | None, selected_rev: str | None,
+):
+    """선택된 Rev로 Wafer_Summary / Site_Level_Raw를 좁혀 상세 섹션에 전달한다."""
+    if chamber is None or selected_rev is None:
+        empty_wafer = equipment_chamber_wafer.iloc[0:0]
+        return empty_wafer, workbook["Site_Level_Raw"].iloc[0:0]
+
+    filtered_wafer = equipment_chamber_wafer[equipment_chamber_wafer["Recipe_Version"] == selected_rev]
+
+    site_df = workbook["Site_Level_Raw"]
+    filtered_site = site_df[
+        (site_df["Equipment_Model"] == equipment)
+        & (site_df["Chamber_ID"] == chamber)
+        & (site_df["Recipe_Version"] == selected_rev)
+    ]
+    return filtered_wafer, filtered_site
 
 
 def show_process_summary(filtered_wafer: pd.DataFrame):
@@ -1123,7 +1134,7 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
 # 2-3. Rev별 스코어링 순위 (멘토 피드백: 현재 어떤 레시피가 가장 좋은지 바로 알 수 있게)
 # ==============================================================================
 def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict):
-    render_dashboard_section_title("Rev별 스코어링 순위", "score", "blue")
+    render_dashboard_section_title("Rev별 종합 품질 점수", "score", "blue")
     st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
     if equipment_chamber_wafer.empty:
         st.info("선택한 조건에 해당하는 데이터가 없습니다.")
@@ -1138,6 +1149,53 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict)
     st.dataframe(scoreboard[table_cols].round(1), use_container_width=True, hide_index=True)
     st.plotly_chart(build_recipe_score_chart(scoreboard), use_container_width=True)
     return scoreboard
+
+
+def show_dashboard_best_case(scoreboard: pd.DataFrame) -> None:
+    """스코어보드 1위 Recipe/Rev를 Best Case 카드로 강조해, 진입 즉시 최고 성능 Rev를 알 수 있게 한다."""
+    if scoreboard is None or scoreboard.empty:
+        return
+    best = scoreboard.iloc[0]
+    with st.container(border=True):
+        st.markdown(dashboard_best_badge_html(escape(str(best["Recipe"]))), unsafe_allow_html=True)
+        cols = st.columns(4)
+        metrics = [
+            ("종합 품질 점수", f"{best['종합 점수']:.1f}점"),
+            ("Pass Rate", f"{best['Overall Spec Pass Rate']:.1f}%"),
+            ("CD Uniformity", f"{best['CD Uniformity']:.2f}%"),
+            ("Depth Uniformity", f"{best['Depth Uniformity']:.2f}%"),
+        ]
+        for col, (label, value) in zip(cols, metrics):
+            with col:
+                render_summary_card(label, value)
+
+
+def select_dashboard_rev(scoreboard: pd.DataFrame, process: str) -> str | None:
+    """Rev 하나를 선택할 수 있게 하고, 기본값은 Best Rev로 둔다.
+    선택 상태는 session_state에 저장해 rerun 후에도 유지되며, Equipment 변경 등으로 기존 선택이
+    더 이상 유효하지 않으면 Best Rev로 안전하게 초기화한다."""
+    rev_key = f"pd_selected_rev_{process}"
+    if scoreboard is None or scoreboard.empty:
+        st.session_state.pop(rev_key, None)
+        st.info("선택한 Equipment/Chamber에 비교할 Rev 데이터가 없습니다.")
+        return None
+
+    options = scoreboard["Recipe"].tolist()
+    best_rev = options[0]
+    if st.session_state.get(rev_key) not in options:
+        st.session_state[rev_key] = best_rev
+
+    label_map = {r: (f"🏆 {r} (Best)" if r == best_rev else str(r)) for r in options}
+    st.caption("Rev 선택 (기본값: Best Rev · 선택한 Rev가 아래 상세 섹션에 반영됩니다)")
+    selected = st.radio(
+        "Rev 선택",
+        options=options,
+        format_func=lambda r: label_map[r],
+        key=rev_key,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    return selected
 
 
 def show_rev_quality_trends(
@@ -1288,6 +1346,169 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
 
 
 # ==============================================================================
+# 7. Parameter History (Recipe Change History) — 과거 파라미터 변경 이력 + 당시 품질 조회
+# ==============================================================================
+def create_parameter_history_selectors(workbook: dict, process: str):
+    st.markdown(
+        """
+        <div class="app-shell-header">
+            <div class="app-shell-eyebrow">RECIPE CHANGE HISTORY</div>
+            <h1 class="app-shell-title" style="font-size:1.9rem;">Recipe Change History</h1>
+            <div class="app-shell-subtitle">저장된 레시피의 파라미터 변경 이력과 당시 품질 결과를 조회합니다.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    equipment_options = ["전체"] + get_equipment_models(workbook["Wafer_Summary"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        equipment = st.selectbox("Equipment Model", equipment_options, key=f"ph_equipment_{process}")
+    with col2:
+        param_type = st.selectbox("변경 파라미터", ["전체"] + PARAM_TYPE_LABELS, key=f"ph_param_type_{process}")
+
+    submitted = st.button("이력 조회", key=f"ph_search_{process}", type="primary")
+    return equipment, param_type, submitted
+
+
+def _history_value_text(value) -> str:
+    if value is None:
+        return "—"
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return escape(str(value))
+
+
+def _history_metric_text(value, unit: str = "", decimals: int = 1) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.{decimals}f}{unit}"
+
+
+def render_history_revision_card(entry: dict) -> None:
+    """Revision 카드 — 접힌 상태에서도 보이는 핵심 정보(Recipe/태그/Change Notes/변경 파라미터/
+    Pass Rate/Wafer 수/Equipment)를 카드로 보여주고, 실제 값 변화·품질·평가 환경은 expander에 담는다."""
+    revision = entry["revision"]
+    quality = entry["quality"]
+    notes = entry.get("change_notes")
+    notes_html = escape(notes) if isinstance(notes, str) and notes.strip() else "변경 목적 기록 없음"
+
+    param_lines = "".join(
+        f"<div>· Step {escape(str(row['stage']).replace('S', ''))} · {escape(row['param_type'] or row['label'])}</div>"
+        for row in entry["detail_rows"]
+    )
+    pass_rate_text = _history_metric_text(quality["pass_rate_mean"], "%")
+    equipment_text = " / ".join(quality["equipment_models"]) if quality["equipment_models"] else "—"
+
+    st.markdown(
+        f"""
+        <div class="history-card">
+            <div class="history-card-head">
+                <span class="revision">{escape(str(revision))}</span>
+                {history_tag_badge_html(entry.get("stage_tag"))}
+            </div>
+            <div class="history-card-notes">{notes_html}</div>
+            <div class="history-param-list">
+                <div class="param-heading">변경 파라미터</div>
+                {param_lines}
+            </div>
+            <div class="history-card-footer">
+                <span>Pass Rate <span class="highlight">{pass_rate_text}</span></span>
+                <span>평가 Wafer <span class="highlight">{quality['wafer_count']}장</span></span>
+                <span class="highlight">{escape(equipment_text)}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander(f"{revision} 변경 상세 보기"):
+        st.markdown(f"**{revision} 변경 상세**")
+        for row in entry["detail_rows"]:
+            if row["abs_delta"] is None:
+                delta_text, delta_class = "N/A", ""
+            else:
+                sign = "+" if row["abs_delta"] > 0 else ""
+                pct_text = f"{sign}{row['pct_change']:.1f}%" if row["pct_change"] is not None else "N/A"
+                delta_text = f"{sign}{row['abs_delta']:g} ({pct_text})"
+                delta_class = "is-up" if row["abs_delta"] > 0 else "is-down" if row["abs_delta"] < 0 else ""
+            st.markdown(
+                f"""
+                <div class="history-detail-row">
+                    <span class="param-label">{escape(row['label'])}</span>
+                    <span class="value-change">{_history_value_text(row['prev_value'])} → {_history_value_text(row['new_value'])}</span>
+                    <span class="delta {delta_class}">{escape(delta_text)}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("**변경 목적**")
+        st.write(notes if isinstance(notes, str) and notes.strip() else "기록 없음")
+
+        st.markdown("**당시 품질**")
+        q_row1 = st.columns(4)
+        for col, (label, value) in zip(q_row1, [
+            ("Top CD 평균", _history_metric_text(quality["top_cd_mean"], " nm")),
+            ("Mid CD 평균", _history_metric_text(quality["mid_cd_mean"], " nm")),
+            ("Bottom CD 평균", _history_metric_text(quality["bottom_cd_mean"], " nm")),
+            ("Depth 평균", _history_metric_text(quality["depth_mean"], " nm")),
+        ]):
+            with col:
+                render_summary_card(label, value)
+        q_row2 = st.columns(4)
+        for col, (label, value) in zip(q_row2, [
+            ("Overall Pass Rate 평균", _history_metric_text(quality["pass_rate_mean"], "%")),
+            ("Total Defect Count 평균", _history_metric_text(quality["defect_count_mean"], "건")),
+            ("Uniformity 평균", _history_metric_text(quality["uniformity_mean"], "%")),
+            ("Wafer Count", f"{quality['wafer_count']}장"),
+        ]):
+            with col:
+                render_summary_card(label, value)
+
+        st.markdown("**평가 환경**")
+        st.write(f"Equipment Model: {', '.join(quality['equipment_models']) if quality['equipment_models'] else '—'}")
+        st.write(f"Chamber ID: {', '.join(quality['chambers']) if quality['chambers'] else '—'}")
+        st.write(f"평가 기간: {quality['eval_period'] or '—'}")
+
+
+def show_parameter_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFrame, process: str,
+                                    equipment: str, param_type: str) -> None:
+    results = build_history_results(recipe_df, wafer_df, process, param_type, equipment)
+
+    if results["revision_count"] == 0:
+        st.markdown(
+            '<div class="history-empty">선택한 조건과 일치하는 파라미터 변경 이력이 없습니다.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    title = f"{param_type} 변경 이력" if param_type and param_type != "전체" else "전체 파라미터 변경 이력"
+    avg_pass_text = _history_metric_text(results["avg_pass_rate"], "%")
+    st.markdown(f"#### {title}")
+    st.caption(
+        f"총 {results['revision_count']}개 Revision · 평가 Wafer {results['total_wafer_count']}장 · "
+        f"평균 Pass Rate {avg_pass_text} · 세부 파라미터 변경 {results['matched_param_count']}건"
+    )
+
+    summary_cols = st.columns(4)
+    for col, (label, value) in zip(summary_cols, [
+        ("검색된 Revision 수", f"{results['revision_count']}개"),
+        ("평가 Wafer 수", f"{results['total_wafer_count']}장"),
+        ("평균 Pass Rate", avg_pass_text),
+        ("세부 파라미터 변경 건수", f"{results['matched_param_count']}건"),
+    ]):
+        with col:
+            render_summary_card(label, value)
+
+    st.markdown("")
+    for entry in reversed(results["revisions"]):  # 최신 Revision이 위로 오게
+        render_history_revision_card(entry)
+
+
+# ==============================================================================
 # 메인 실행부
 # ==============================================================================
 def main():
@@ -1300,7 +1521,7 @@ def main():
     process = st.session_state.process
     stage_defs = PROCESS_STAGE_DEFS[process]
 
-    tab1, tab2 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard"])
+    tab1, tab2, tab3 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter History"])
 
     # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
     with tab1:
@@ -1474,24 +1695,53 @@ def main():
             else:
                 st.info("공정 조건과 목표 품질을 입력하고 '예측 · 평가 · 추천 실행' 버튼을 눌러주세요.")
 
-    # ---- Tab 2: Process Dashboard (조건 선택 → AI 분석(맨 위) → Summary → 시각화 → Wafer Map → Zone 분석) ----
+    # ---- Tab 2: Process Dashboard ----
+    # Equipment 선택(Chamber 자동) → Rev별 종합 품질 점수 + Best Case(항상 노출) → Rev 선택
+    # → 상세 섹션(AI 분석/Summary/시각화/Wafer Map/Zone 분석)은 expander로 접어 초기 화면을 짧게 유지한다.
     with tab2:
         workbook = get_active_workbook()
-        filtered_wafer, filtered_site, equipment_chamber_wafer = create_process_dashboard_selectors(workbook, process)
+        equipment, chamber, equipment_chamber_wafer = create_process_dashboard_equipment_selector(workbook, process)
 
-        st.markdown("---")
-        zone_summary_preview = get_zone_summary(filtered_site) if not filtered_site.empty else None
-        show_dashboard_ai_analysis(filtered_wafer, zone_summary_preview)
-        st.markdown("---")
-        show_process_summary(filtered_wafer)
         dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
         scoreboard = show_recipe_scoreboard(equipment_chamber_wafer, dashboard_targets)
+        show_dashboard_best_case(scoreboard)
+        selected_rev = select_dashboard_rev(scoreboard, process)
+
+        filtered_wafer, filtered_site = filter_dashboard_by_rev(
+            workbook, equipment_chamber_wafer, equipment, chamber, selected_rev,
+        )
+
+        with st.expander("AI 분석 자세히 보기", expanded=False):
+            zone_summary_preview = get_zone_summary(filtered_site) if not filtered_site.empty else None
+            show_dashboard_ai_analysis(filtered_wafer, zone_summary_preview)
+
+        with st.expander("Process Summary 자세히 보기", expanded=False):
+            show_process_summary(filtered_wafer)
+
+        with st.expander("품질 결과 시각화 자세히 보기 (Rev별 품질 변화 · Wafer 단위 추이)", expanded=False):
+            show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"])
+            show_quality_visualization(filtered_wafer)
+
+        with st.expander("Wafer Map / Profile 자세히 보기", expanded=False):
+            show_wafer_map(filtered_site)
+
+        with st.expander("Zone 분석 자세히 보기", expanded=False):
+            show_zone_analysis(filtered_site)
+
+    # ---- Tab 3: Parameter History (Recipe Change History) ----
+    with tab3:
+        workbook = get_active_workbook()
+        equipment, param_type, submitted = create_parameter_history_selectors(workbook, process)
+        if submitted:
+            st.session_state[f"ph_searched_{process}"] = True
+
         st.markdown("---")
-        show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"])
-        st.markdown("---")
-        show_quality_visualization(filtered_wafer)
-        show_wafer_map(filtered_site)
-        show_zone_analysis(filtered_site)
+        if st.session_state.get(f"ph_searched_{process}"):
+            show_parameter_history_results(
+                workbook["Recipe_Master"], workbook["Wafer_Summary"], process, equipment, param_type,
+            )
+        else:
+            st.info("Equipment Model과 변경 파라미터를 선택한 뒤 '이력 조회' 버튼을 눌러주세요.")
 
     render_recent_quality_sidebar(recent_quality_slot)
 
