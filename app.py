@@ -499,6 +499,15 @@ def create_input_panel():
     a3.metric("Step1 Layer", stage_defs[0]["label"])
     a4.metric("마지막 Step Layer", stage_defs[-1]["label"])
 
+    # ---- 시뮬레이터 모드 (먼저 선택 — 멘토 피드백: 무엇을 할지 먼저 고르게) ----
+    st.markdown("<div class='section-title'>시뮬레이터 모드</div>", unsafe_allow_html=True)
+    st.markdown('<span class="simulator-mode-anchor"></span>', unsafe_allow_html=True)
+    mode_label = st.radio(
+        "무엇을 하고 싶으신가요?",
+        [TARGET_MODE_LABEL, DIRECT_MODE_LABEL],
+        horizontal=True, key=f"mode_{process}",
+    )
+
     # ---- 장비 선택 (Chamber는 자동 대표값 사용 — 멘토 피드백: 모든 Chamber 동일 조건으로 가정) ----
     st.markdown("<div class='section-title'>장비 선택</div>", unsafe_allow_html=True)
     b1, b2 = st.columns(2)
@@ -520,25 +529,33 @@ def create_input_panel():
 
     # ---- 목표 품질 설정 (참고값 → 목표값 형식 — 멘토 피드백) ----
     st.markdown("<div class='section-title'>목표 품질 설정</div>", unsafe_allow_html=True)
-    st.caption(f"'{recipe}' Recipe의 실측 평균이 참고값입니다. 라벨에 표시된 참고값 → 원하는 목표값만 조정하세요.")
+    st.caption(f"'{recipe}' Recipe의 실측 평균이 각 입력창 위 참고값으로 표시됩니다. 아래 입력창에 원하는 목표값을 입력하세요.")
     defaults = get_default_targets(wafer_df, recipe_df, recipe)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
+        st.caption(f"기준 Recipe 참고값: {defaults['target_top_cd']:g}nm")
         target_top_cd = st.number_input(
-            f"Top CD (nm): {defaults['target_top_cd']:g} → 목표", value=defaults["target_top_cd"], key=f"ttop_{process}_{recipe}",
+            "목표 Top CD (nm)", value=defaults["target_top_cd"], key=f"ttop_{process}_{recipe}",
+            help="원하는 목표값을 입력하세요.",
         )
     with c2:
+        st.caption(f"기준 Recipe 참고값: {defaults['target_mid_cd']:g}nm")
         target_mid_cd = st.number_input(
-            f"Mid CD (nm): {defaults['target_mid_cd']:g} → 목표", value=defaults["target_mid_cd"], key=f"tmid_{process}_{recipe}",
+            "목표 Mid CD (nm)", value=defaults["target_mid_cd"], key=f"tmid_{process}_{recipe}",
+            help="원하는 목표값을 입력하세요.",
         )
     with c3:
+        st.caption(f"기준 Recipe 참고값: {defaults['target_bottom_cd']:g}nm")
         target_bottom_cd = st.number_input(
-            f"Bottom CD (nm): {defaults['target_bottom_cd']:g} → 목표", value=defaults["target_bottom_cd"], key=f"tbot_{process}_{recipe}",
+            "목표 Bottom CD (nm)", value=defaults["target_bottom_cd"], key=f"tbot_{process}_{recipe}",
+            help="원하는 목표값을 입력하세요.",
         )
     with c4:
+        st.caption(f"기준 Recipe 참고값: {defaults['target_depth']:g}nm")
         target_depth = st.number_input(
-            f"Depth (nm): {defaults['target_depth']:g} → 목표", value=defaults["target_depth"], key=f"tdep_{process}_{recipe}",
+            "목표 Depth (nm)", value=defaults["target_depth"], key=f"tdep_{process}_{recipe}",
+            help="원하는 목표값을 입력하세요.",
         )
 
     c5, c6, c7, c8 = st.columns(4)
@@ -561,15 +578,7 @@ def create_input_panel():
     stage_defaults = stage_inputs_from_recipe(recipe_df, recipe, stage_defs)
     baseline_inputs = {"equipment": equipment, "chamber": chamber, "recipe": recipe, **stage_defaults}
 
-    # ---- 시뮬레이터 모드 (멘토 피드백: 기능 두 가지를 명확히 분리) ----
-    st.markdown("<div class='section-title'>시뮬레이터 모드</div>", unsafe_allow_html=True)
-    st.markdown('<span class="simulator-mode-anchor"></span>', unsafe_allow_html=True)
-    mode_label = st.radio(
-        "무엇을 하고 싶으신가요?",
-        [TARGET_MODE_LABEL, DIRECT_MODE_LABEL],
-        horizontal=True, key=f"mode_{process}",
-    )
-
+    # ---- 레시피 변경 (모드별 입력/추천 — 멘토 피드백: 기능 두 가지를 명확히 분리) ----
     if mode_label == TARGET_MODE_LABEL:
         st.caption("위 Recipe를 출발점으로, 목표 품질에 가까워지려면 파라미터를 어떻게 바꾸면 좋을지 AI가 추천합니다.")
         run = st.button(

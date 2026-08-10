@@ -12,6 +12,8 @@ isolation은 Depth 원본 단위가 Angstrom(A)이라 로딩 시 nm으로 환산
 이후 로직(charts.py 포함)은 항상 *_nm 컬럼만 보면 되도록 통일한다.
 """
 
+from __future__ import annotations
+
 import os
 
 import numpy as np
