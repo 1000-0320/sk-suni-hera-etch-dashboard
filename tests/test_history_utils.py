@@ -263,3 +263,145 @@ def test_build_param_change_detail_no_previous_revision():
 def test_aggregate_revision_quality_no_wafer_data_returns_none(wafer_df):
     assert hu.aggregate_revision_quality(wafer_df, "Rev999", "trench") is None
     assert hu.aggregate_revision_quality(pd.DataFrame(), "Rev1", "trench") is None
+
+
+# 평가 기간은 시간 없이 날짜만 표시한다
+def test_eval_period_is_date_only(wafer_df):
+    quality = hu.aggregate_revision_quality(wafer_df, "Rev1", "trench")
+    assert quality["eval_period"] == "2025-01-07"  # 모두 같은 날짜라 단일 날짜만
+
+
+# 세부 파라미터 드롭다운: 이력에 실제 등장한 컬럼만, 공정별 Stage 라벨
+def test_get_detail_param_options_only_actually_changed_columns():
+    df = pd.DataFrame([
+        {"Recipe_Version": "Rev1", "Changed_Params_This_Rev": "S1_RF_Bias_W"},
+        {"Recipe_Version": "Rev2", "Changed_Params_This_Rev": "S2_RF_Bias_W"},
+    ])
+    # S4_RF_Bias_W 같은 컬럼은 df에 아예 없으니 당연히 옵션에도 없어야 함
+    options = hu.get_detail_param_options(df, "RF Bias")
+    assert options == ["S1_RF_Bias_W", "S2_RF_Bias_W"]
+    assert hu.get_detail_param_options(df, "전체") == []
+
+
+def test_format_detail_param_label_differs_by_process():
+    trench_label = hu.format_detail_param_label("S4_RF_Bias_W", "trench")
+    isolation_label = hu.format_detail_param_label("S2_RF_Bias_W", "isolation")
+    assert "S4" in trench_label and "Si Main" in trench_label
+    assert "S2" in isolation_label and "PolySi" in isolation_label
+
+
+def test_format_short_step_label():
+    assert hu.format_short_step_label("S1_Time_s") == "Step 1 · Time"
+    assert hu.format_short_step_label("S4_RF_Bias_W") == "Step 4 · RF Bias"
+
+
+# 카드용 card_rows: detail_param을 골라도 같은 유형의 다른 Step은 함께 나오고,
+# 고른 항목만 selected=True로 맨 앞에 온다. 다른 유형은 card_rows에서 제외된다.
+def test_card_rows_group_by_type_and_flag_selected():
+    recipe = pd.DataFrame([
+        {
+            "Recipe_Version": "Base", "Changed_Params_This_Rev": "(no change)", "Change_Notes": "",
+            "S1_Time_s": 9.0, "S2_Time_s": 38.0, "S1_Pressure_mT": 12,
+        },
+        {
+            "Recipe_Version": "Rev15", "Changed_Params_This_Rev": "S1_Time_s, S2_Time_s, S1_Pressure_mT",
+            "Change_Notes": "최종 양산 후보",
+            "S1_Time_s": 10.0, "S2_Time_s": 40.0, "S1_Pressure_mT": 10,
+        },
+    ])
+    wafer = pd.DataFrame([_wafer_row("Rev15", "EQP-A", "CH-A", "W1", 99.7)])
+
+    results = hu.build_history_results(recipe, wafer, "trench", "Time", "전체", detail_param="S2_Time_s")
+    rev15 = results["revisions"][0]
+    card_cols = [r["param_col"] for r in rev15["card_rows"]]
+    assert card_cols == ["S2_Time_s", "S1_Time_s"]  # 선택한 항목이 맨 앞
+    assert rev15["card_rows"][0]["selected"] is True
+    assert rev15["card_rows"][1]["selected"] is False
+    # S1_Pressure_mT(다른 유형)는 card_rows에 없어야 한다 — 상세 보기의 detail_rows에만 있음
+    assert "S1_Pressure_mT" not in card_cols
+    assert "S1_Pressure_mT" in [r["param_col"] for r in rev15["detail_rows"]]
+
+
+def test_card_rows_without_detail_param_none_selected():
+    recipe = pd.DataFrame([
+        {
+            "Recipe_Version": "Base", "Changed_Params_This_Rev": "(no change)", "Change_Notes": "",
+            "S1_Time_s": 9.0, "S2_Time_s": 38.0,
+        },
+        {
+            "Recipe_Version": "Rev1", "Changed_Params_This_Rev": "S1_Time_s, S2_Time_s", "Change_Notes": "",
+            "S1_Time_s": 10.0, "S2_Time_s": 40.0,
+        },
+    ])
+    wafer = pd.DataFrame([_wafer_row("Rev1", "EQP-A", "CH-A", "W1", 99.0)])
+    results = hu.build_history_results(recipe, wafer, "trench", "Time", "전체")
+    rev1 = results["revisions"][0]
+    assert all(r["selected"] is False for r in rev1["card_rows"])
+
+
+# 직전 Revision 대비 품질 변화 판정 — Change_Notes가 아니라 실측값 기준
+def test_compare_revision_quality_classification():
+    targets = {"target_top_cd": 250.0}
+    prev_quality = {
+        "top_cd_mean": 253.0,  # 오차 +3.0
+        "pass_rate_mean": 90.0,
+        "defect_count_mean": 5.0,
+        "uniformity_mean": 3.0,
+        "mid_cd_mean": None, "bottom_cd_mean": None, "depth_mean": None,
+    }
+    curr_quality = {
+        "top_cd_mean": 250.5,  # 오차 +0.5 (절대오차 3.0 -> 0.5, 개선)
+        "pass_rate_mean": 96.0,  # +6 -> 개선
+        "defect_count_mean": 4.9,  # -0.1 -> 임계값(0.1) 이내라 유지
+        "uniformity_mean": 4.5,  # +1.5 -> 악화(값 증가는 Uniformity에선 나쁨) -> 확인 필요
+        "mid_cd_mean": None, "bottom_cd_mean": None, "depth_mean": None,
+    }
+    rows = hu.compare_revision_quality(curr_quality, prev_quality, targets)
+    by_key = {r["key"]: r for r in rows}
+    assert by_key["top_cd"]["classification"] == "개선"
+    assert by_key["pass_rate"]["classification"] == "개선"
+    assert by_key["defect_count"]["classification"] == "유지"
+    assert by_key["uniformity"]["classification"] == "확인 필요"
+    # Target이 없는 지표(Pass Rate 등)는 오차 필드가 계산되지 않는다
+    assert by_key["pass_rate"]["prev_error"] is None
+
+
+def test_compare_revision_quality_none_when_missing_prev():
+    assert hu.compare_revision_quality({"top_cd_mean": 250.0}, None) is None
+    assert hu.compare_revision_quality(None, {"top_cd_mean": 250.0}) is None
+
+
+def test_build_history_results_attaches_comparison_and_kpi_target_diff():
+    recipe = pd.DataFrame([
+        {
+            "Recipe_Version": "Base", "Changed_Params_This_Rev": "(no change)", "Change_Notes": "",
+            "S1_Time_s": 9.0,
+        },
+        {
+            "Recipe_Version": "Rev1", "Changed_Params_This_Rev": "S1_Time_s", "Change_Notes": "",
+            "S1_Time_s": 10.0,
+        },
+    ])
+    wafer = pd.DataFrame([
+        _wafer_row("Base", "EQP-A", "CH-A", "W0", 90.0, Top_CD_Mean_nm=253.0),
+        _wafer_row("Rev1", "EQP-A", "CH-A", "W1", 96.0, Top_CD_Mean_nm=250.5),
+    ])
+    targets = {"target_top_cd": 250.0}
+    results = hu.build_history_results(recipe, wafer, "trench", "Time", "전체", targets=targets)
+    rev1 = results["revisions"][0]
+    assert rev1["prev_revision"] == "Base"
+    assert rev1["comparison"] is not None
+    assert rev1["kpi_target_diff"]["top_cd"]["delta"] == pytest.approx(0.5)
+
+
+def test_build_history_results_comparison_none_without_prev_quality():
+    # Rev1의 이전 Revision(Base)이 이 장비에서 평가된 적이 없으면 비교 불가 -> None이어야 함
+    recipe = pd.DataFrame([
+        {"Recipe_Version": "Base", "Changed_Params_This_Rev": "(no change)", "Change_Notes": "", "S1_Time_s": 9.0},
+        {"Recipe_Version": "Rev1", "Changed_Params_This_Rev": "S1_Time_s", "Change_Notes": "", "S1_Time_s": 10.0},
+    ])
+    wafer = pd.DataFrame([_wafer_row("Rev1", "EQP-A", "CH-A", "W1", 96.0)])
+    results = hu.build_history_results(recipe, wafer, "trench", "Time", "전체")
+    rev1 = results["revisions"][0]
+    assert rev1["prev_quality"] is None
+    assert rev1["comparison"] is None

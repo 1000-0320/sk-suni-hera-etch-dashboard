@@ -34,12 +34,15 @@ from data_utils import (
     PROCESS_STAGE_DEFS, PROCESS_LABELS,
     REQUIRED_SHEETS, PARTICLE_DEFECT_THRESHOLD,
 )
-from history_utils import PARAM_TYPE_LABELS, get_equipment_models, build_history_results
+from history_utils import (
+    PARAM_TYPE_LABELS, get_equipment_models, get_detail_param_options, format_detail_param_label,
+    build_history_results,
+)
 from style import (
     inject_custom_css, render_metric_card, render_summary_card, render_status_badge,
-    render_score_hero, render_subscore_card, render_pill_card,
+    render_score_hero, render_subscore_card, render_pill_card, render_history_kpi_card,
     get_pass_rate_status, get_cd_uniformity_status, get_depth_uniformity_status, get_particle_status,
-    get_score_status, STATUS_META, history_tag_badge_html, dashboard_best_badge_html,
+    get_score_status, STATUS_META, history_tag_badge_html, dashboard_best_badge_html, COLORS,
 )
 from charts import (
     build_cd_bar_chart, build_gauge_chart, build_variation_gauge,
@@ -162,6 +165,7 @@ _DASHBOARD_WAFER_ICONS = {
             <path d="M10 20.2h4" />
         </svg>
     """,
+    "trophy": '<span style="font-size:1.4rem;line-height:1;">🏆</span>',
 }
 
 
@@ -1024,30 +1028,14 @@ def show_combined_recipe_section(
 # ==============================================================================
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
-def reset_process_dashboard_filters(process: str) -> None:
-    """Process Dashboard의 Equipment 선택과 Rev 선택 상태를 해당 공정 기본값으로 되돌린다."""
-    for key in (f"pd_equipment_{process}", f"pd_selected_rev_{process}"):
-        st.session_state.pop(key, None)
-
-
 def create_process_dashboard_equipment_selector(workbook: dict, process: str):
     """Equipment만 사용자가 선택하고, Chamber는 대표값을 자동 결정한다.
     (멘토 피드백: 모든 Chamber가 동일 조건이라는 가정 — Simulator의 get_representative_chamber와 동일 규칙 재사용)"""
     wafer_df = workbook["Wafer_Summary"]
 
-    col_eq, col_reset = st.columns([2, 1], gap="small")
-    with col_eq:
-        equipment = st.selectbox(
-            "Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}",
-        )
-    with col_reset:
-        st.button(
-            "↺ 초기화",
-            key=f"reset_pd_filters_{process}",
-            on_click=reset_process_dashboard_filters,
-            args=(process,),
-            use_container_width=True,
-        )
+    equipment = st.selectbox(
+        "Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}",
+    )
 
     chamber = get_representative_chamber(wafer_df, equipment)
     chamber_text = escape(str(chamber)) if chamber is not None else "—"
@@ -1133,22 +1121,110 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
 # ==============================================================================
 # 2-3. Rev별 스코어링 순위 (멘토 피드백: 현재 어떤 레시피가 가장 좋은지 바로 알 수 있게)
 # ==============================================================================
-def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict):
-    render_dashboard_section_title("Rev별 종합 품질 점수", "score", "blue")
+_SCOREBOARD_BEST_BOLD_COLS = {"순위", "Recipe", "종합 점수"}
+
+
+def _style_scoreboard_rows(display_df: pd.DataFrame, recipe_order: list, best_rev: str, selected_rev: str | None):
+    """1위(Best) 행은 핵심 값을 항상 bold로, 선택 상태에 따라 배경을 다르게 강조한다.
+    - 선택된 행이 Best면: 연한 금색 배경.
+    - 선택된 행이 Best가 아니면: 선택 행만 accent 배경(Best 행의 전체 배경 강조는 해제),
+      Best 행은 Recipe 셀의 🏆 표기와 bold로만 계속 구분된다."""
+    def _row_style(row):
+        recipe = recipe_order[row.name]
+        is_best = recipe == best_rev
+        is_selected = recipe == selected_rev
+        if is_selected and is_best:
+            bg = f"background-color: {COLORS['gold_soft']};"
+        elif is_selected:
+            bg = f"background-color: {COLORS['accent_soft']};"
+        else:
+            bg = ""
+        return [
+            bg + (" font-weight: 800;" if is_best and col in _SCOREBOARD_BEST_BOLD_COLS else "")
+            for col in row.index
+        ]
+    return display_df.style.apply(_row_style, axis=1)
+
+
+def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict, recipe_df: pd.DataFrame, process: str):
+    """Rev별 종합 품질 점수 테이블. 순위 산정과 정렬만 담당하는 표시 레이어이며,
+    종합 점수 계산식(compute_composite_score)과 실측 집계 로직(score_recipe_versions)은 그대로 둔다."""
+    render_dashboard_section_title("Rev별 종합 품질 점수", "trophy", "blue")
     st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
+
+    rev_state_key = "dashboard_selected_rev"
+    table_key = f"pd_rev_table_{process}"
+
     if equipment_chamber_wafer.empty:
         st.info("선택한 조건에 해당하는 데이터가 없습니다.")
-        return pd.DataFrame()
+        st.session_state.pop(rev_state_key, None)
+        return pd.DataFrame(), None
 
     scoreboard = score_recipe_versions(equipment_chamber_wafer, targets)
     if scoreboard.empty:
         st.info("Rev 스코어를 계산할 데이터가 없습니다.")
-        return scoreboard
+        st.session_state.pop(rev_state_key, None)
+        return scoreboard, None
 
-    table_cols = ["Recipe", "종합 점수", "Wafer 수", "Top CD", "Mid CD", "Bottom CD", "Depth", "Overall Spec Pass Rate"]
-    st.dataframe(scoreboard[table_cols].round(1), use_container_width=True, hide_index=True)
+    # 동점이면 기존 Recipe/Rev 자연 순서(Base, Rev1, Rev2, ... Rev9, Rev10 ...)로 안정적으로 정렬.
+    # 종합 점수 값 자체는 건드리지 않고, 표시 순서(순위)만 결정한다.
+    natural_order = {r: i for i, r in enumerate(ordered_recipe_versions(recipe_df, scoreboard["Recipe"].unique()))}
+    scoreboard = scoreboard.assign(_natural_order=scoreboard["Recipe"].map(natural_order))
+    scoreboard = (
+        scoreboard.sort_values(["종합 점수", "_natural_order"], ascending=[False, True], kind="mergesort")
+        .drop(columns="_natural_order")
+        .reset_index(drop=True)
+    )
+
+    options = scoreboard["Recipe"].tolist()
+    best_rev = options[0]
+
+    # 위젯을 다시 그리기 전에, 이번 rerun에 이미 반영된 클릭 결과를 먼저 읽어 선택 상태를 갱신한다.
+    # (st.session_state[table_key]는 dataframe 위젯이 자체 관리하는 값이라 프로그램적으로 쓸 수는 없고 읽기만 가능하다.)
+    pending = st.session_state.get(table_key)
+    if pending is not None:
+        clicked_rows = pending.get("selection", {}).get("rows", [])
+        if clicked_rows:
+            st.session_state[rev_state_key] = scoreboard.iloc[clicked_rows[0]]["Recipe"]
+
+    if st.session_state.get(rev_state_key) not in options:
+        st.session_state[rev_state_key] = best_rev
+    selected_rev = st.session_state[rev_state_key]
+
+    display_df = pd.DataFrame({
+        "순위": scoreboard.index + 1,
+        "Recipe": [f"🏆 {r}" if r == best_rev else r for r in scoreboard["Recipe"]],
+        "종합 점수": scoreboard["종합 점수"],
+        "Wafer 수": scoreboard["Wafer 수"],
+        "Top CD": scoreboard["Top CD"],
+        "Mid CD": scoreboard["Mid CD"],
+        "Bottom CD": scoreboard["Bottom CD"],
+        "Depth": scoreboard["Depth"],
+        "Overall Spec Pass Rate": scoreboard["Overall Spec Pass Rate"],
+    })
+    styled = _style_scoreboard_rows(display_df, options, best_rev, selected_rev)
+
+    st.dataframe(
+        styled,
+        hide_index=True,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=table_key,
+        column_config={
+            "순위": st.column_config.NumberColumn("순위", format="%d", width="small"),
+            "Recipe": st.column_config.TextColumn("Recipe"),
+            "종합 점수": st.column_config.NumberColumn("종합 점수", format="%.1f"),
+            "Wafer 수": st.column_config.NumberColumn("Wafer 수", format="%d"),
+            "Top CD": st.column_config.NumberColumn("Top CD", format="%.1f"),
+            "Mid CD": st.column_config.NumberColumn("Mid CD", format="%.1f"),
+            "Bottom CD": st.column_config.NumberColumn("Bottom CD", format="%.1f"),
+            "Depth": st.column_config.NumberColumn("Depth", format="%.1f"),
+            "Overall Spec Pass Rate": st.column_config.NumberColumn("Overall Spec Pass Rate", format="%.1f"),
+        },
+    )
     st.plotly_chart(build_recipe_score_chart(scoreboard), use_container_width=True)
-    return scoreboard
+    return scoreboard, selected_rev
 
 
 def show_dashboard_best_case(scoreboard: pd.DataFrame) -> None:
@@ -1168,34 +1244,6 @@ def show_dashboard_best_case(scoreboard: pd.DataFrame) -> None:
         for col, (label, value) in zip(cols, metrics):
             with col:
                 render_summary_card(label, value)
-
-
-def select_dashboard_rev(scoreboard: pd.DataFrame, process: str) -> str | None:
-    """Rev 하나를 선택할 수 있게 하고, 기본값은 Best Rev로 둔다.
-    선택 상태는 session_state에 저장해 rerun 후에도 유지되며, Equipment 변경 등으로 기존 선택이
-    더 이상 유효하지 않으면 Best Rev로 안전하게 초기화한다."""
-    rev_key = f"pd_selected_rev_{process}"
-    if scoreboard is None or scoreboard.empty:
-        st.session_state.pop(rev_key, None)
-        st.info("선택한 Equipment/Chamber에 비교할 Rev 데이터가 없습니다.")
-        return None
-
-    options = scoreboard["Recipe"].tolist()
-    best_rev = options[0]
-    if st.session_state.get(rev_key) not in options:
-        st.session_state[rev_key] = best_rev
-
-    label_map = {r: (f"🏆 {r} (Best)" if r == best_rev else str(r)) for r in options}
-    st.caption("Rev 선택 (기본값: Best Rev · 선택한 Rev가 아래 상세 섹션에 반영됩니다)")
-    selected = st.radio(
-        "Rev 선택",
-        options=options,
-        format_func=lambda r: label_map[r],
-        key=rev_key,
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    return selected
 
 
 def show_rev_quality_trends(
@@ -1346,14 +1394,14 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
 
 
 # ==============================================================================
-# 7. Parameter History (Recipe Change History) — 과거 파라미터 변경 이력 + 당시 품질 조회
+# 7. Parameter 변경 이력 조회 (Parameter Change History) — 과거 파라미터 변경 이력 + 당시 품질 조회
 # ==============================================================================
 def create_parameter_history_selectors(workbook: dict, process: str):
     st.markdown(
         """
         <div class="app-shell-header">
-            <div class="app-shell-eyebrow">RECIPE CHANGE HISTORY</div>
-            <h1 class="app-shell-title" style="font-size:1.9rem;">Recipe Change History</h1>
+            <div class="app-shell-eyebrow">PARAMETER CHANGE HISTORY</div>
+            <h1 class="app-shell-title" style="font-size:1.9rem;">Parameter Change History</h1>
             <div class="app-shell-subtitle">저장된 레시피의 파라미터 변경 이력과 당시 품질 결과를 조회합니다.</div>
         </div>
         """,
@@ -1362,14 +1410,39 @@ def create_parameter_history_selectors(workbook: dict, process: str):
 
     equipment_options = ["전체"] + get_equipment_models(workbook["Wafer_Summary"])
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         equipment = st.selectbox("Equipment Model", equipment_options, key=f"ph_equipment_{process}")
     with col2:
         param_type = st.selectbox("변경 파라미터", ["전체"] + PARAM_TYPE_LABELS, key=f"ph_param_type_{process}")
+    with col3:
+        detail_cols = get_detail_param_options(workbook["Recipe_Master"], param_type)
+        all_label = f"전체 {param_type}" if param_type and param_type != "전체" else "전체"
+        detail_labels = [all_label] + [format_detail_param_label(c, process) for c in detail_cols]
+        # key에 process와 param_type을 포함시켜, 공정/유형을 바꿔 옵션 목록이 달라져도 이전
+        # 선택값이 새 목록에 없어서 나는 StreamlitAPIException을 피한다 (매번 새 위젯 취급).
+        detail_choice = st.selectbox(
+            "세부 파라미터 (선택사항)", detail_labels,
+            key=f"ph_detail_{process}_{param_type}",
+            disabled=not detail_cols,
+        )
+        detail_param = detail_cols[detail_labels.index(detail_choice) - 1] if detail_choice != all_label else None
 
     submitted = st.button("이력 조회", key=f"ph_search_{process}", type="primary")
-    return equipment, param_type, submitted
+    return equipment, param_type, detail_param, submitted
+
+
+def _strip_blank_lines(html: str) -> str:
+    """조립된 HTML 문자열에서 빈 줄(공백만 있는 줄 포함)을 제거한다.
+
+    카드/행 HTML은 선택적 조각({badge}, {eval_period_html} 등)이 빈 문자열일 때 그 줄이
+    공백만 남는데, Streamlit의 마크다운 파서는 HTML 블록 중간의 빈 줄을 블록의 끝으로
+    해석해 버린다 — 그러면 그 뒤 태그들이 렌더링되지 않고 그대로 텍스트로 노출된다."""
+    return "\n".join(line for line in html.split("\n") if line.strip())
+
+
+def _render_html(html: str) -> None:
+    st.markdown(_strip_blank_lines(html), unsafe_allow_html=True)
 
 
 def _history_value_text(value) -> str:
@@ -1387,96 +1460,307 @@ def _history_metric_text(value, unit: str = "", decimals: int = 1) -> str:
     return f"{value:.{decimals}f}{unit}"
 
 
+def _no_negative_zero(value: float, decimals: int = 1) -> float:
+    """반올림 후 -0.0이 되는 값을 0.0으로 바로잡는다 (예: -0.03 -> "-0.0"으로 보이는 문제 방지)."""
+    return round(value, decimals) + 0.0
+
+
+def _history_value_change_text(row: dict) -> str:
+    """"9.4 → 10.0 s" 처럼 단위를 값 뒤에 한 번만 붙인다."""
+    text = f"{_history_value_text(row['prev_value'])} → {_history_value_text(row['new_value'])}"
+    unit = row.get("unit")
+    if unit and (row["prev_value"] is not None or row["new_value"] is not None):
+        text += f" {unit}"
+    return text
+
+
+def _history_delta_text(row: dict) -> str:
+    if row["abs_delta"] is None:
+        return "N/A"
+    sign = "+" if row["abs_delta"] > 0 else ""
+    pct_text = f"{sign}{row['pct_change']:.1f}%" if row["pct_change"] is not None else "N/A"
+    return f"{sign}{row['abs_delta']:g} ({pct_text})"
+
+
+def _history_delta_class(row: dict) -> str:
+    if row["abs_delta"] is None:
+        return ""
+    return "is-up" if row["abs_delta"] > 0 else "is-down" if row["abs_delta"] < 0 else ""
+
+
+def _major_change_row_html(row: dict) -> str:
+    """카드의 "주요 변경" 한 줄 — 값만 보여주고 변화량/%는 넣지 않는다(상세 보기에서만)."""
+    selected_class = " is-selected" if row.get("selected") else ""
+    badge = '<span class="history-select-badge">선택</span>' if row.get("selected") else ""
+    return _strip_blank_lines(f"""
+        <div class="history-major-row{selected_class}">
+            <span class="param-label">{escape(row['short_label'])}</span>
+            <span>
+                <span class="value-change">{_history_value_change_text(row)}</span>
+                {badge}
+            </span>
+        </div>
+        """)
+
+
+def _detail_row_lg_html(row: dict) -> str:
+    """상세 보기의 큰 파라미터 변경 행 — 라벨/뱃지가 첫 줄, 값 변화/변화량이 둘째 줄."""
+    selected_class = " is-selected" if row.get("selected") else ""
+    badge = '<span class="history-select-badge">선택 파라미터</span>' if row.get("selected") else ""
+    return _strip_blank_lines(f"""
+        <div class="history-param-row-lg{selected_class}">
+            <div class="row-top">
+                <span class="param-label">{escape(row['label'])}</span>
+                {badge}
+            </div>
+            <div class="row-bottom">
+                <span class="value-change">{_history_value_text(row['prev_value'])} → {_history_value_text(row['new_value'])}</span>
+                <span class="delta {_history_delta_class(row)}">{escape(_history_delta_text(row))}</span>
+            </div>
+        </div>
+        """)
+
+
 def render_history_revision_card(entry: dict) -> None:
-    """Revision 카드 — 접힌 상태에서도 보이는 핵심 정보(Recipe/태그/Change Notes/변경 파라미터/
-    Pass Rate/Wafer 수/Equipment)를 카드로 보여주고, 실제 값 변화·품질·평가 환경은 expander에 담는다."""
+    """Revision 카드 — Change Notes 전문은 넣지 않고, 실제 파라미터 값 변화를 바로 보여준다.
+    세부 파라미터를 골랐으면 그 항목을 맨 위에 강조하고(같은 유형의 다른 Step은 그 아래),
+    "전체"로 조회했으면 최대 2개까지만 보여주고 나머지는 "외 N건"으로 축약한다."""
     revision = entry["revision"]
     quality = entry["quality"]
-    notes = entry.get("change_notes")
-    notes_html = escape(notes) if isinstance(notes, str) and notes.strip() else "변경 목적 기록 없음"
+    card_rows = entry["card_rows"]
+    has_selection = any(row.get("selected") for row in card_rows)
 
-    param_lines = "".join(
-        f"<div>· Step {escape(str(row['stage']).replace('S', ''))} · {escape(row['param_type'] or row['label'])}</div>"
-        for row in entry["detail_rows"]
-    )
+    if has_selection:
+        shown_rows, more_count = card_rows, 0
+    else:
+        shown_rows, more_count = card_rows[:2], max(0, len(card_rows) - 2)
+
+    major_rows_html = "".join(_major_change_row_html(row) for row in shown_rows)
+    more_html = f'<div class="history-major-more">외 {more_count}건</div>' if more_count else ""
+
+    eval_period = quality.get("eval_period")
+    eval_period_html = f'<span class="history-eval-period">{escape(eval_period)}</span>' if eval_period else "<span></span>"
+
     pass_rate_text = _history_metric_text(quality["pass_rate_mean"], "%")
     equipment_text = " / ".join(quality["equipment_models"]) if quality["equipment_models"] else "—"
 
-    st.markdown(
-        f"""
+    _render_html(f"""
         <div class="history-card">
             <div class="history-card-head">
-                <span class="revision">{escape(str(revision))}</span>
-                {history_tag_badge_html(entry.get("stage_tag"))}
+                <span class="history-card-head-title">
+                    <span class="revision">{escape(str(revision))}</span>
+                    {history_tag_badge_html(entry.get("stage_tag"))}
+                </span>
+                {eval_period_html}
             </div>
-            <div class="history-card-notes">{notes_html}</div>
-            <div class="history-param-list">
-                <div class="param-heading">변경 파라미터</div>
-                {param_lines}
-            </div>
+            <div class="history-major-heading">주요 변경</div>
+            {major_rows_html}
+            {more_html}
             <div class="history-card-footer">
                 <span>Pass Rate <span class="highlight">{pass_rate_text}</span></span>
                 <span>평가 Wafer <span class="highlight">{quality['wafer_count']}장</span></span>
                 <span class="highlight">{escape(equipment_text)}</span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """)
 
     with st.expander(f"{revision} 변경 상세 보기"):
-        st.markdown(f"**{revision} 변경 상세**")
-        for row in entry["detail_rows"]:
-            if row["abs_delta"] is None:
-                delta_text, delta_class = "N/A", ""
-            else:
-                sign = "+" if row["abs_delta"] > 0 else ""
-                pct_text = f"{sign}{row['pct_change']:.1f}%" if row["pct_change"] is not None else "N/A"
-                delta_text = f"{sign}{row['abs_delta']:g} ({pct_text})"
-                delta_class = "is-up" if row["abs_delta"] > 0 else "is-down" if row["abs_delta"] < 0 else ""
+        render_history_detail_view(entry)
+
+
+def render_history_detail_view(entry: dict) -> None:
+    """상세 보기 전체 — 1행 2열(왼쪽 변경 상세 / 오른쪽 품질 변화 요약) → 당시 품질 KPI →
+    비교표 → 평가 환경 순서로, 스크롤 없이 "무엇을 바꿨고 품질이 어떻게 달라졌는지" 먼저 보이게 한다."""
+    revision = entry["revision"]
+    notes = entry.get("change_notes")
+
+    left_col, right_col = st.columns(2, gap="large")
+    with left_col:
+        with st.container(border=True):
+            st.markdown(f"#### {revision} 변경 상세")
+            st.markdown("**변경 목적**")
+            st.write(notes if isinstance(notes, str) and notes.strip() else "기록 없음")
+            st.markdown("**파라미터 변경 상세**")
+            for row in entry["detail_rows"]:
+                _render_html(_detail_row_lg_html(row))
+
+    with right_col:
+        with st.container(border=True):
+            st.markdown("#### 이전 Revision 대비 품질 변화")
+            render_history_quality_change_summary(entry)
+
+    st.markdown("")
+    st.markdown("##### 당시 품질")
+    render_history_kpi_section(entry["quality"], entry.get("kpi_target_diff"))
+
+    st.markdown("##### 변경 전/후 실제 품질 비교")
+    render_history_comparison_table(entry)
+
+    st.markdown("##### 평가 환경")
+    quality = entry["quality"]
+    st.write(f"Equipment Model: {', '.join(quality['equipment_models']) if quality['equipment_models'] else '—'}")
+    st.write(f"Chamber ID: {', '.join(quality['chambers']) if quality['chambers'] else '—'}")
+    st.write(f"평가 기간: {quality['eval_period'] or '—'}")
+
+
+def _comparison_item_text(row: dict) -> tuple:
+    """개선/확인 필요 요약 한 줄의 (지표 라벨, 값 변화 텍스트)를 만든다.
+    CD/Depth는 Target과의 절대 오차(부호 없이) 변화로, 나머지는 실측값 자체의 변화로 보여준다."""
+    if row["mode"] == "error":
+        label = f"{row['label']} Target 오차"
+        if row["prev_error"] is None or row["curr_error"] is None:
+            return label, "데이터 없음"
+        return label, f"{abs(row['prev_error']):.1f} {row['unit']} → {abs(row['curr_error']):.1f} {row['unit']}"
+
+    if row["prev_value"] is None or row["curr_value"] is None:
+        return row["label"], "데이터 없음"
+    delta_unit = "%p" if row["unit"] == "%" else row["unit"]
+    return (
+        row["label"],
+        f"{row['prev_value']:.1f}{row['unit']} → {row['curr_value']:.1f}{row['unit']} "
+        f"({_no_negative_zero(row['delta']):+.1f}{delta_unit})",
+    )
+
+
+def render_history_quality_change_summary(entry: dict) -> None:
+    """오른쪽 카드 본문 — 표보다 결론(개선/확인 필요)을 먼저 보여준다.
+    Change_Notes는 전혀 참고하지 않고 실제 Wafer_Summary 집계값만 사용한다."""
+    prev_revision = entry.get("prev_revision")
+    comparison = entry.get("comparison")
+
+    if prev_revision:
+        st.markdown(f'<div class="history-quality-subtitle">{escape(str(prev_revision))} → {escape(str(entry["revision"]))}</div>', unsafe_allow_html=True)
+
+    if not comparison:
+        st.info("이전 Revision 평가 데이터가 없어 품질 변화를 비교할 수 없습니다.")
+        return
+
+    improved = [r for r in comparison if r["classification"] == "개선"]
+    attention = [r for r in comparison if r["classification"] == "확인 필요"]
+
+    if improved:
+        st.markdown('<div class="history-quality-section-heading is-improve">개선</div>', unsafe_allow_html=True)
+        for row in improved:
+            label, value_text = _comparison_item_text(row)
             st.markdown(
                 f"""
-                <div class="history-detail-row">
-                    <span class="param-label">{escape(row['label'])}</span>
-                    <span class="value-change">{_history_value_text(row['prev_value'])} → {_history_value_text(row['new_value'])}</span>
-                    <span class="delta {delta_class}">{escape(delta_text)}</span>
+                <div class="history-quality-item is-improve">
+                    <span class="icon">✓</span>
+                    <span class="body">
+                        <div class="metric-label">{escape(label)}</div>
+                        <div class="metric-values">{escape(value_text)}</div>
+                    </span>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-        st.markdown("**변경 목적**")
-        st.write(notes if isinstance(notes, str) and notes.strip() else "기록 없음")
+    if attention:
+        st.markdown('<div class="history-quality-section-heading is-attention">확인 필요</div>', unsafe_allow_html=True)
+        for row in attention:
+            label, value_text = _comparison_item_text(row)
+            st.markdown(
+                f"""
+                <div class="history-quality-item is-attention">
+                    <span class="icon">△</span>
+                    <span class="body">
+                        <div class="metric-label">{escape(label)}</div>
+                        <div class="metric-values">{escape(value_text)}</div>
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        st.markdown("**당시 품질**")
-        q_row1 = st.columns(4)
-        for col, (label, value) in zip(q_row1, [
-            ("Top CD 평균", _history_metric_text(quality["top_cd_mean"], " nm")),
-            ("Mid CD 평균", _history_metric_text(quality["mid_cd_mean"], " nm")),
-            ("Bottom CD 평균", _history_metric_text(quality["bottom_cd_mean"], " nm")),
-            ("Depth 평균", _history_metric_text(quality["depth_mean"], " nm")),
-        ]):
-            with col:
-                render_summary_card(label, value)
-        q_row2 = st.columns(4)
-        for col, (label, value) in zip(q_row2, [
-            ("Overall Pass Rate 평균", _history_metric_text(quality["pass_rate_mean"], "%")),
-            ("Total Defect Count 평균", _history_metric_text(quality["defect_count_mean"], "건")),
-            ("Uniformity 평균", _history_metric_text(quality["uniformity_mean"], "%")),
-            ("Wafer Count", f"{quality['wafer_count']}장"),
-        ]):
-            with col:
-                render_summary_card(label, value)
+    if not improved and not attention:
+        st.caption("이전 Revision과 비교했을 때 뚜렷한 변화가 없습니다 (모든 지표가 오차 범위 내에서 유지).")
 
-        st.markdown("**평가 환경**")
-        st.write(f"Equipment Model: {', '.join(quality['equipment_models']) if quality['equipment_models'] else '—'}")
-        st.write(f"Chamber ID: {', '.join(quality['chambers']) if quality['chambers'] else '—'}")
-        st.write(f"평가 기간: {quality['eval_period'] or '—'}")
+
+def _kpi_card_html(label: str, value_text: str, subtext: str = "") -> str:
+    """당시 품질" 카드 하나. subtext가 없어도 빈 영역을 그대로 두어(칸을 지우지 않음)
+    카드 8개의 높이가 CSS(min-height)로 항상 맞춰지게 한다."""
+    return f"""
+        <div class="kpi-card">
+            <div class="kpi-label">{escape(label)}</div>
+            <div class="kpi-value">{escape(value_text)}</div>
+            <div class="kpi-subtext">{escape(subtext)}</div>
+        </div>
+        """
+
+
+def _kpi_cd_depth_card(label: str, key: str, actual_raw, kpi_target_diff: dict | None) -> str:
+    """CD/Depth 카드 — 평균과 Target 오차를 "같은 반올림 결과"로 계산해서, 화면에 보이는
+    두 숫자를 사용자가 직접 빼봐도 항상 맞게 만든다(예: 249.9 / Target -0.1 = 250.0 - 0.1... 이 아니라
+    반올림된 249.9와 반올림된 Target을 먼저 만들고 그 차이를 다시 반올림해 보여준다)."""
+    if actual_raw is None:
+        return _kpi_card_html(label, "—")
+    rounded_actual = round(actual_raw, 1)
+    subtext = ""
+    target_raw = (kpi_target_diff or {}).get(key, {}).get("target")
+    if target_raw is not None:
+        rounded_target = round(target_raw, 1)
+        delta = _no_negative_zero(rounded_actual - rounded_target)
+        subtext = f"Target {delta:+.1f} nm"
+    return _kpi_card_html(label, _history_metric_text(rounded_actual, " nm"), subtext)
+
+
+def render_history_kpi_section(quality: dict, kpi_target_diff: dict | None) -> None:
+    """당시 품질 KPI — 8개 카드를 하나의 CSS Grid 컨테이너에 렌더링한다(Streamlit st.columns를
+    쓰지 않아 열 너비 어긋남·카드 겹침이 생기지 않는다). 데스크톱 4열 x 2행, 태블릿 2열, 모바일 1열
+    (.kpi-grid의 media query가 처리). CD/Depth에는 Target 대비 오차를 함께 보여준다
+    (Spec 범위가 없어 충족/이탈 판정은 하지 않는다)."""
+    cards_html = "".join([
+        _kpi_cd_depth_card("Top CD 평균", "top_cd", quality["top_cd_mean"], kpi_target_diff),
+        _kpi_cd_depth_card("Mid CD 평균", "mid_cd", quality["mid_cd_mean"], kpi_target_diff),
+        _kpi_cd_depth_card("Bottom CD 평균", "bottom_cd", quality["bottom_cd_mean"], kpi_target_diff),
+        _kpi_cd_depth_card("Depth 평균", "depth", quality["depth_mean"], kpi_target_diff),
+        _kpi_card_html("Overall Pass Rate", _history_metric_text(quality["pass_rate_mean"], "%")),
+        _kpi_card_html("Total Defect Count 평균", _history_metric_text(quality["defect_count_mean"], "건")),
+        _kpi_card_html("Uniformity 평균", _history_metric_text(quality["uniformity_mean"], "%")),
+        _kpi_card_html("Wafer Count", f"{quality['wafer_count']}장"),
+    ])
+    _render_html(f'<div class="kpi-grid">{cards_html}</div>')
+
+
+def render_history_comparison_table(entry: dict) -> None:
+    """변경 전/후 실제 품질 비교표 — 오른쪽 카드 요약의 계산 근거를 사용자가 직접 검증할 수 있게
+    전체 지표를 표로 보여준다."""
+    comparison = entry.get("comparison")
+    if not comparison:
+        st.caption("이전 Revision 평가 데이터가 없어 비교표를 만들 수 없습니다.")
+        return
+
+    prev_label = f"{entry['prev_revision']} 평균"
+    curr_label = f"{entry['revision']} 평균"
+
+    def _fmt(value, unit):
+        return "-" if value is None else f"{_no_negative_zero(value):.1f}{unit}"
+
+    rows = []
+    for row in comparison:
+        unit = row["unit"]
+        rows.append({
+            "지표": row["label"],
+            prev_label: _fmt(row["prev_value"], unit),
+            curr_label: _fmt(row["curr_value"], unit),
+            "Target": _fmt(row["target"], unit) if row["mode"] == "error" else "-",
+            "이전 Target 오차": _fmt(row["prev_error"], unit) if row["mode"] == "error" else "-",
+            "현재 Target 오차": _fmt(row["curr_error"], unit) if row["mode"] == "error" else "-",
+            "변화량": (
+                "-" if row["delta"] is None else
+                f"{_no_negative_zero(row['delta']):+.1f}{'%p' if unit == '%' else unit}"
+            ),
+            "판정": row["classification"] or "-",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 def show_parameter_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFrame, process: str,
-                                    equipment: str, param_type: str) -> None:
-    results = build_history_results(recipe_df, wafer_df, process, param_type, equipment)
+                                    equipment: str, param_type: str, detail_param: str | None = None) -> None:
+    results = build_history_results(
+        recipe_df, wafer_df, process, param_type, equipment, detail_param,
+        targets=get_default_targets(wafer_df, recipe_df),
+    )
 
     if results["revision_count"] == 0:
         st.markdown(
@@ -1486,22 +1770,20 @@ def show_parameter_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFra
         return
 
     title = f"{param_type} 변경 이력" if param_type and param_type != "전체" else "전체 파라미터 변경 이력"
-    avg_pass_text = _history_metric_text(results["avg_pass_rate"], "%")
     st.markdown(f"#### {title}")
     st.caption(
         f"총 {results['revision_count']}개 Revision · 평가 Wafer {results['total_wafer_count']}장 · "
-        f"평균 Pass Rate {avg_pass_text} · 세부 파라미터 변경 {results['matched_param_count']}건"
+        f"세부 파라미터 변경 {results['matched_param_count']}건"
     )
 
-    summary_cols = st.columns(4)
+    summary_cols = st.columns(3)
     for col, (label, value) in zip(summary_cols, [
         ("검색된 Revision 수", f"{results['revision_count']}개"),
         ("평가 Wafer 수", f"{results['total_wafer_count']}장"),
-        ("평균 Pass Rate", avg_pass_text),
         ("세부 파라미터 변경 건수", f"{results['matched_param_count']}건"),
     ]):
         with col:
-            render_summary_card(label, value)
+            render_history_kpi_card(label, value)
 
     st.markdown("")
     for entry in reversed(results["revisions"]):  # 최신 Revision이 위로 오게
@@ -1521,7 +1803,7 @@ def main():
     process = st.session_state.process
     stage_defs = PROCESS_STAGE_DEFS[process]
 
-    tab1, tab2, tab3 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter History"])
+    tab1, tab2, tab3 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter 변경 이력 조회"])
 
     # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
     with tab1:
@@ -1703,9 +1985,10 @@ def main():
         equipment, chamber, equipment_chamber_wafer = create_process_dashboard_equipment_selector(workbook, process)
 
         dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
-        scoreboard = show_recipe_scoreboard(equipment_chamber_wafer, dashboard_targets)
+        scoreboard, selected_rev = show_recipe_scoreboard(
+            equipment_chamber_wafer, dashboard_targets, workbook["Recipe_Master"], process,
+        )
         show_dashboard_best_case(scoreboard)
-        selected_rev = select_dashboard_rev(scoreboard, process)
 
         filtered_wafer, filtered_site = filter_dashboard_by_rev(
             workbook, equipment_chamber_wafer, equipment, chamber, selected_rev,
@@ -1728,17 +2011,17 @@ def main():
         with st.expander("Zone 분석 자세히 보기", expanded=False):
             show_zone_analysis(filtered_site)
 
-    # ---- Tab 3: Parameter History (Recipe Change History) ----
+    # ---- Tab 3: Parameter 변경 이력 조회 (Parameter Change History) ----
     with tab3:
         workbook = get_active_workbook()
-        equipment, param_type, submitted = create_parameter_history_selectors(workbook, process)
+        equipment, param_type, detail_param, submitted = create_parameter_history_selectors(workbook, process)
         if submitted:
             st.session_state[f"ph_searched_{process}"] = True
 
         st.markdown("---")
         if st.session_state.get(f"ph_searched_{process}"):
             show_parameter_history_results(
-                workbook["Recipe_Master"], workbook["Wafer_Summary"], process, equipment, param_type,
+                workbook["Recipe_Master"], workbook["Wafer_Summary"], process, equipment, param_type, detail_param,
             )
         else:
             st.info("Equipment Model과 변경 파라미터를 선택한 뒤 '이력 조회' 버튼을 눌러주세요.")

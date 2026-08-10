@@ -56,6 +56,8 @@ THEMES = {
         "good": "#0ca30c",
         "warning": "#fab219",
         "critical": "#d03b3b",
+        "gold_soft": "rgba(250,178,25,0.20)",
+        "gold_border": "rgba(250,178,25,0.45)",
     },
     "racing_coral": {
         "surface": "#ffffff",
@@ -95,6 +97,8 @@ THEMES = {
         "good": "#0ca30c",
         "warning": "#fab219",
         "critical": "#d03b3b",
+        "gold_soft": "rgba(250,178,25,0.20)",
+        "gold_border": "rgba(250,178,25,0.45)",
     },
 }
 
@@ -739,7 +743,15 @@ def inject_custom_css():
             margin-bottom: 0.6rem;
             box-shadow: 0 2px 10px {COLORS['shadow_card']};
         }}
+        /* 왼쪽: Revision + 태그, 오른쪽: 평가 기간 — 같은 줄 위에 나란히 */
         .history-card-head {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }}
+        .history-card-head-title {{
             display: flex;
             align-items: center;
             gap: 0.55rem;
@@ -760,24 +772,10 @@ def inject_custom_css():
             font-weight: 800;
             letter-spacing: 0.01em;
         }}
-        .history-card-notes {{
-            color: {COLORS['text_primary']};
-            font-size: 0.92rem;
-            line-height: 1.55;
-            margin-top: 0.5rem;
-        }}
-        .history-param-list {{
-            color: {COLORS['text_secondary']};
-            font-size: 0.82rem;
-            line-height: 1.75;
-            margin-top: 0.45rem;
-        }}
-        .history-param-list .param-heading {{
+        .history-eval-period {{
             color: {COLORS['muted']};
-            font-size: 0.72rem;
-            font-weight: 800;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
+            font-size: 0.78rem;
+            font-weight: 600;
         }}
         .history-card-footer {{
             display: flex;
@@ -802,20 +800,173 @@ def inject_custom_css():
             font-size: 0.95rem;
             font-weight: 600;
         }}
-        .history-detail-row {{
+
+        /* Revision 카드의 "주요 변경" — 컴팩트한 행 목록 */
+        .history-major-heading {{
+            color: {COLORS['muted']};
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin: 0.7rem 0 0.35rem;
+        }}
+        /* label과 값을 카드 양 끝으로 벌려 놓지 않고 가깝게 한 줄로 붙여 보여준다 */
+        .history-major-row {{
             display: flex;
             align-items: baseline;
-            gap: 0.5rem;
-            padding: 0.4rem 0;
-            border-bottom: 1px solid {COLORS['gridline']};
+            gap: 0.9rem;
+            padding: 0.32rem 0.5rem;
+            border-radius: 10px;
             flex-wrap: wrap;
         }}
-        .history-detail-row:last-child {{ border-bottom: none; }}
-        .history-detail-row .param-label {{ color: {COLORS['text_primary']}; font-weight: 800; font-size: 0.85rem; min-width: 11rem; }}
-        .history-detail-row .value-change {{ color: {COLORS['text_secondary']}; font-size: 0.85rem; }}
-        .history-detail-row .delta {{ font-weight: 800; font-size: 0.85rem; }}
-        .history-detail-row .delta.is-up {{ color: {COLORS['chart_critical']}; }}
-        .history-detail-row .delta.is-down {{ color: {COLORS['accent']}; }}
+        .history-major-row .param-label {{ color: {COLORS['text_primary']}; font-weight: 700; font-size: 0.85rem; white-space: nowrap; }}
+        .history-major-row .value-change {{ color: {COLORS['text_secondary']}; font-size: 0.85rem; }}
+        .history-major-row.is-selected {{
+            background: {COLORS['accent_soft']};
+            border-left: 3px solid {COLORS['accent']};
+        }}
+        .history-major-row.is-selected .param-label {{ color: {COLORS['accent']}; font-weight: 800; }}
+        .history-select-badge {{
+            display: inline-block;
+            color: {COLORS['accent']};
+            background: {COLORS['surface']};
+            border: 1px solid {COLORS['accent']};
+            border-radius: 999px;
+            padding: 0.06rem 0.5rem;
+            font-size: 0.62rem;
+            font-weight: 800;
+            margin-left: 0.4rem;
+        }}
+        .history-major-more {{
+            color: {COLORS['muted']};
+            font-size: 0.78rem;
+            padding: 0.25rem 0.5rem;
+        }}
+
+        /* 상세 보기 — 큰 파라미터 변경 행 (읽기 쉬운 크기, 라벨/값 2줄 구조) */
+        .history-param-row-lg {{
+            padding: 0.9rem 0.9rem;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid {COLORS['gridline']};
+            border-radius: 12px;
+        }}
+        .history-param-row-lg:last-child {{ border-bottom: none; margin-bottom: 0; }}
+        .history-param-row-lg .row-top, .history-param-row-lg .row-bottom {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+        }}
+        .history-param-row-lg .row-bottom {{ margin-top: 0.35rem; }}
+        .history-param-row-lg .param-label {{ color: {COLORS['text_primary']}; font-weight: 650; font-size: 1rem; }}
+        .history-param-row-lg .value-change {{ color: {COLORS['text_primary']}; font-size: 1.1rem; font-weight: 600; }}
+        .history-param-row-lg .delta {{ font-size: 0.92rem; font-weight: 800; }}
+        /* 증가는 빨강, 감소는 파랑 (사용자 지정) */
+        .history-param-row-lg .delta.is-up {{ color: {COLORS['critical']}; }}
+        .history-param-row-lg .delta.is-down {{ color: #1f6ff0; }}
+        .history-param-row-lg.is-selected {{
+            background: {COLORS['accent_soft']};
+            border-left: 4px solid {COLORS['accent']};
+            padding-left: 0.75rem;
+        }}
+        .history-param-row-lg.is-selected .param-label {{ color: {COLORS['accent']}; font-weight: 800; }}
+
+        /* 당시 품질 KPI — 연한 주황/분홍 배경 (흰 배경과 구분되도록) */
+        .history-kpi-card {{
+            background-color: #FFF6F3;
+            border: 1px solid #F3D2C5;
+            border-radius: 18px;
+            padding: 0.95rem;
+            text-align: center;
+        }}
+        .history-kpi-card .label {{ color: {COLORS['text_secondary']}; font-size: 0.78rem; font-weight: 700; }}
+        .history-kpi-card .value {{ color: {COLORS['text_primary']}; font-size: 1.35rem; font-weight: 800; margin-top: 0.25rem; }}
+        .history-kpi-card .target-line {{ color: {COLORS['accent']}; font-size: 0.74rem; font-weight: 700; margin-top: 0.3rem; }}
+
+        /* "당시 품질" 8개 카드 전용 — CSS Grid로 겹침/침범 없이 배치 (데스크톱 4열 x 2행) */
+        .kpi-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+            width: 100%;
+            margin-top: 16px;
+            margin-bottom: 24px;
+        }}
+        .kpi-card {{
+            box-sizing: border-box;
+            min-width: 0;
+            min-height: 128px;
+            padding: 18px 16px;
+            border: 1px solid #f3d2c5;
+            border-radius: 14px;
+            background: #fff4ef;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }}
+        .kpi-label {{
+            width: 100%;
+            margin-bottom: 8px;
+            color: #5f514c;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.35;
+            text-align: center;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }}
+        .kpi-value {{
+            width: 100%;
+            color: #171717;
+            font-size: clamp(20px, 2vw, 26px);
+            font-weight: 700;
+            line-height: 1.2;
+            text-align: center;
+            white-space: nowrap;
+        }}
+        .kpi-subtext {{
+            width: 100%;
+            min-height: 20px;
+            margin-top: 7px;
+            color: #e45d4f;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.3;
+            text-align: center;
+            white-space: normal;
+        }}
+        @media (max-width: 900px) {{
+            .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+        }}
+        @media (max-width: 560px) {{
+            .kpi-grid {{ grid-template-columns: minmax(0, 1fr); }}
+        }}
+
+        /* 이전 Revision 대비 품질 변화 — 개선/확인 필요 요약 항목 */
+        .history-quality-item {{
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.4rem 0;
+        }}
+        .history-quality-item .icon {{ font-size: 0.95rem; font-weight: 800; line-height: 1.4; }}
+        .history-quality-item .body {{ line-height: 1.4; }}
+        .history-quality-item .metric-label {{ color: {COLORS['text_primary']}; font-weight: 700; font-size: 0.9rem; }}
+        .history-quality-item .metric-values {{ color: {COLORS['text_secondary']}; font-size: 0.85rem; }}
+        .history-quality-item.is-improve .icon {{ color: {COLORS['good']}; }}
+        .history-quality-item.is-attention .icon {{ color: #c98500; }}
+        .history-quality-section-heading {{
+            font-size: 0.78rem;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            margin: 0.6rem 0 0.2rem;
+        }}
+        .history-quality-section-heading.is-improve {{ color: {COLORS['good']}; }}
+        .history-quality-section-heading.is-attention {{ color: #c98500; }}
+        .history-quality-subtitle {{ color: {COLORS['muted']}; font-size: 0.8rem; font-weight: 600; margin-top: -0.4rem; margin-bottom: 0.5rem; }}
 
         div[data-testid="stMetricValue"] {{ color: {COLORS['text_primary']} !important; }}
 
@@ -852,6 +1003,24 @@ def render_summary_card(label: str, value):
         <div class="summary-card">
             <div class="label">{label}</div>
             <div class="value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_history_kpi_card(label: str, value_text: str, target_line: str | None = None):
+    """Parameter History "당시 품질" KPI 카드 — 흰 배경과 구분되도록 연한 주황/분홍 배경을 쓴다.
+    target_line이 있으면(Top/Mid/Bottom CD, Depth) Target 대비 차이를 세 번째 줄에 보여준다."""
+    target_html = f'<div class="target-line">{target_line}</div>' if target_line else ""
+    # target_html이 빈 문자열일 때 그 자리를 독립된 줄로 두면(공백만 있는 줄) 마크다운 파서가
+    # HTML 블록이 거기서 끝난 것으로 오해해 뒤의 </div>가 그대로 텍스트로 노출된다 — 항상
+    # 앞줄에 바로 이어 붙여서 빈 줄이 생기지 않게 한다.
+    st.markdown(
+        f"""
+        <div class="history-kpi-card">
+            <div class="label">{label}</div>
+            <div class="value">{value_text}</div>{target_html}
         </div>
         """,
         unsafe_allow_html=True,

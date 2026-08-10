@@ -18,12 +18,13 @@ import os
 import pandas as pd
 import yaml
 
+from data_utils import PROCESS_STAGE_DEFS
 from model import format_parameter_label
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROCESS_CONFIG_PATH = os.path.join(BASE_DIR, "config", "process_config.yaml")
 
-# UI에 노출하는 필터 값(순서 고정) -> 판정에 쓰는 실제 컬럼 접미사
+# UI에 노출하는 필터 값(순서 고정) -> 판정에 쓰는 실제 컬럼 접미사 / 단위
 PARAM_TYPE_LABELS = ["Time", "Pressure", "RF Bias", "Gas Flow / Ratio"]
 _PARAM_TYPE_SUFFIXES = [
     ("Time", "_Time_s"),
@@ -31,6 +32,7 @@ _PARAM_TYPE_SUFFIXES = [
     ("RF Bias", "_RF_Bias_W"),
     ("Gas Flow / Ratio", "_sccm"),
 ]
+_PARAM_TYPE_UNITS = {"Time": "s", "Pressure": "mT", "RF Bias": "W", "Gas Flow / Ratio": "sccm"}
 
 # Change_Notes에서 보조적으로 추출하는 변경 단계 태그 (우선순위 순 — 더 "완결된" 상태를 우선 표시)
 STAGE_TAG_PRIORITY = ["양산 후보", "최종", "확정", "완료", "1차"]
@@ -85,6 +87,62 @@ def classify_param_type(param_col: str) -> str | None:
         if param_col.endswith(suffix):
             return label
     return None
+
+
+def format_short_step_label(param_col: str) -> str:
+    """Revision 카드의 "주요 변경" 목록에 쓰는 짧은 라벨 (예: "Step 1 · Time")."""
+    if not isinstance(param_col, str):
+        return str(param_col)
+    stage_num = param_col.split("_")[0].replace("S", "")
+    param_type = classify_param_type(param_col)
+    return f"Step {stage_num} · {param_type}" if param_type else param_col
+
+
+def get_param_unit(param_col: str) -> str:
+    """카드/상세 보기에서 이전값 → 변경값 뒤에 한 번만 붙이는 단위 (s/mT/W/sccm)."""
+    return _PARAM_TYPE_UNITS.get(classify_param_type(param_col), "")
+
+
+def _stage_label_for_process(stage_key: str, process: str) -> str:
+    """공정별 PROCESS_STAGE_DEFS에서 Stage의 설명형 라벨(예: "S1 (SiON Strip)")을 찾는다.
+    못 찾으면 Stage key 그대로("S1")를 대신 반환한다."""
+    for stage in PROCESS_STAGE_DEFS.get(process, []):
+        if stage.get("key") == stage_key:
+            return stage.get("label", stage_key)
+    return stage_key
+
+
+def format_detail_param_label(param_col: str, process: str) -> str:
+    """세부 파라미터 드롭다운 옵션 라벨. Time/Pressure/RF Bias는 Stage의 실제 이름을 괄호로
+    보여줘 어느 공정 단계인지 바로 알 수 있게 하고(예: "S1 (SiON Strip) Etch Time"),
+    Gas Flow / Ratio는 가스 종류 자체가 식별자라 Stage 설명 없이 짧게 표시한다(예: "S1 CF4 Flow")."""
+    if not isinstance(param_col, str):
+        return str(param_col)
+    stage_key = param_col.split("_")[0]
+    param_type = classify_param_type(param_col)
+    if param_type in ("Time", "Pressure", "RF Bias"):
+        stage_label = _stage_label_for_process(stage_key, process)
+        suffix = {"Time": "Etch Time", "Pressure": "Pressure", "RF Bias": "RF Bias"}[param_type]
+        return f"{stage_label} {suffix}"
+    if param_type == "Gas Flow / Ratio":
+        parts = param_col.split("_")
+        gas = parts[1] if len(parts) > 1 else param_col
+        return f"{stage_key} {gas} Flow"
+    return param_col
+
+
+def get_detail_param_options(recipe_df: pd.DataFrame, param_type: str | None) -> list:
+    """선택한 변경 파라미터 유형에 속하면서, 실제로 Changed_Params_This_Rev에 한 번 이상
+    기록된 컬럼만 Stage 순으로 반환한다. Recipe_Master에 구조적으로 존재하기만 하고 한 번도
+    바뀐 적 없는 컬럼은 제외한다 — 선택해도 항상 빈 결과만 나오는 옵션을 두지 않기 위함이다.
+    param_type이 없거나 "전체"면 빈 리스트."""
+    if not param_type or param_type == "전체" or recipe_df is None or "Changed_Params_This_Rev" not in recipe_df.columns:
+        return []
+    changed_cols: set = set()
+    for raw in recipe_df["Changed_Params_This_Rev"]:
+        changed_cols.update(parse_changed_params(raw))
+    cols = [c for c in changed_cols if classify_param_type(c) == param_type]
+    return sorted(cols, key=lambda c: (c.split("_")[0], c))
 
 
 def classify_changed_params(changed_params: list) -> dict:
@@ -215,6 +273,8 @@ def build_param_change_detail(recipe_row, prev_row, changed_params: list) -> lis
         rows.append({
             "param_col": col,
             "label": format_parameter_label(col),
+            "short_label": format_short_step_label(col),
+            "unit": get_param_unit(col),
             "stage": col.split("_")[0],
             "param_type": classify_param_type(col),
             "prev_value": prev_value if prev_value is None or pd.notna(prev_value) else None,
@@ -294,32 +354,153 @@ def aggregate_revision_quality(wafer_df: pd.DataFrame, revision: str, process: s
 
 
 def _eval_period(subset: pd.DataFrame) -> str | None:
-    """평가 기간을 "가장 이른 시각 ~ 가장 늦은 시각" 문자열로 요약. Eval_Timestamp가 없거나
-    파싱할 수 없으면 None (표시 쪽에서 '—' 처리)."""
+    """평가 기간을 "가장 이른 날짜 ~ 가장 늦은 날짜" 문자열로 요약(시간은 표시하지 않음).
+    Eval_Timestamp가 없거나 파싱할 수 없으면 None (표시 쪽에서 '—' 처리)."""
     if "Eval_Timestamp" not in subset.columns:
         return None
     ts = pd.to_datetime(subset["Eval_Timestamp"], errors="coerce").dropna()
     if ts.empty:
         return None
     start, end = ts.min(), ts.max()
-    fmt = "%Y-%m-%d %H:%M"
-    if start == end:
+    fmt = "%Y-%m-%d"
+    if start.date() == end.date():
         return start.strftime(fmt)
     return f"{start.strftime(fmt)} ~ {end.strftime(fmt)}"
+
+
+# ------------------------------------------------------------------------------
+# 품질 실측값 대비 Target 차이 (당시 품질 KPI 카드용 — Spec 범위가 없으므로 판정은 하지 않음)
+# ------------------------------------------------------------------------------
+_TARGET_METRIC_MAP = [
+    ("top_cd", "top_cd_mean", "target_top_cd"),
+    ("mid_cd", "mid_cd_mean", "target_mid_cd"),
+    ("bottom_cd", "bottom_cd_mean", "target_bottom_cd"),
+    ("depth", "depth_mean", "target_depth"),
+]
+
+
+def build_target_comparison(quality: dict, targets: dict | None) -> dict:
+    """Top/Mid/Bottom CD, Depth 각각의 실측 평균과 Target(get_default_targets)의 차이(Δ)를 만든다.
+    실제 Spec 허용범위가 없어 충족/이탈 같은 판정은 하지 않고 차이만 중립적으로 계산한다."""
+    result = {}
+    for key, quality_key, target_key in _TARGET_METRIC_MAP:
+        actual = (quality or {}).get(quality_key)
+        target = (targets or {}).get(target_key)
+        delta = None
+        if actual is not None and target is not None:
+            try:
+                delta = float(actual) - float(target)
+            except (TypeError, ValueError):
+                delta = None
+        result[key] = {"actual": actual, "target": target, "delta": delta}
+    return result
+
+
+# ------------------------------------------------------------------------------
+# 직전 Revision 대비 품질 변화 (Change_Notes가 아니라 Wafer_Summary 실측값만 사용)
+# ------------------------------------------------------------------------------
+# (key, 표시 라벨, quality 필드, target 필드 또는 None, 단위, 판정 방식, "미세한 차이" 임계값)
+# 판정 방식: "error"=Target과의 절대오차 축소가 개선, "higher"=값 증가가 개선, "lower"=값 감소가 개선
+_COMPARISON_ROWS = [
+    # unit은 실측값(prev/curr) 표시에 쓰는 단위. Pass Rate/Uniformity의 변화량은 표시할 때
+    # 관례적으로 "%p"(퍼센트 포인트)를 쓰므로, 그건 unit=="%"인 항목에 한해 렌더링 쪽에서 붙인다.
+    ("top_cd", "Top CD", "top_cd_mean", "target_top_cd", "nm", "error", 0.1),
+    ("mid_cd", "Mid CD", "mid_cd_mean", "target_mid_cd", "nm", "error", 0.1),
+    ("bottom_cd", "Bottom CD", "bottom_cd_mean", "target_bottom_cd", "nm", "error", 0.1),
+    ("depth", "Depth", "depth_mean", "target_depth", "nm", "error", 0.5),
+    ("pass_rate", "Pass Rate", "pass_rate_mean", None, "%", "higher", 0.5),
+    ("defect_count", "Defect Count", "defect_count_mean", None, "건", "lower", 0.1),
+    ("uniformity", "Uniformity", "uniformity_mean", None, "%", "lower", 0.1),
+]
+
+
+def _classify_change(mode: str, prev_value, curr_value, prev_error, curr_error, threshold: float) -> str | None:
+    """"개선"/"확인 필요"/"유지" 중 하나를 고른다. 비교에 필요한 값이 없으면 None."""
+    if mode == "error":
+        if prev_error is None or curr_error is None:
+            return None
+        change = abs(curr_error) - abs(prev_error)
+        if change < -threshold:
+            return "개선"
+        if change > threshold:
+            return "확인 필요"
+        return "유지"
+
+    if prev_value is None or curr_value is None:
+        return None
+    delta = curr_value - prev_value
+    if mode == "higher":
+        if delta > threshold:
+            return "개선"
+        if delta < -threshold:
+            return "확인 필요"
+        return "유지"
+    if mode == "lower":
+        if delta < -threshold:
+            return "개선"
+        if delta > threshold:
+            return "확인 필요"
+        return "유지"
+    return None
+
+
+def compare_revision_quality(curr_quality: dict | None, prev_quality: dict | None,
+                              targets: dict | None = None) -> list | None:
+    """직전 Revision 대비 현재 Revision의 품질 변화를 7개 지표로 정리한다.
+    CD/Depth는 Target과의 절대 오차가 줄었는지로, Pass Rate/Defect/Uniformity는 값 자체의
+    증감으로 개선 여부를 판단한다 — Change_Notes의 표현은 전혀 참고하지 않는다
+    (파라미터 변경과 품질 개선의 인과관계를 단정하지 않기 위함).
+    curr_quality/prev_quality 둘 다 있어야 계산하며, 하나라도 없으면 None."""
+    if curr_quality is None or prev_quality is None:
+        return None
+    targets = targets or {}
+
+    rows = []
+    for key, label, quality_key, target_key, unit, mode, threshold in _COMPARISON_ROWS:
+        prev_value = prev_quality.get(quality_key)
+        curr_value = curr_quality.get(quality_key)
+        target = targets.get(target_key) if target_key else None
+
+        prev_error = curr_error = None
+        if mode == "error" and target is not None:
+            if prev_value is not None:
+                prev_error = prev_value - target
+            if curr_value is not None:
+                curr_error = curr_value - target
+
+        delta = None
+        if prev_value is not None and curr_value is not None:
+            delta = curr_value - prev_value
+
+        rows.append({
+            "key": key, "label": label, "unit": unit, "mode": mode,
+            "prev_value": prev_value, "curr_value": curr_value, "target": target,
+            "prev_error": prev_error, "curr_error": curr_error, "delta": delta,
+            "classification": _classify_change(mode, prev_value, curr_value, prev_error, curr_error, threshold),
+        })
+    return rows
 
 
 # ------------------------------------------------------------------------------
 # 화면에서 호출하는 최상위 조회 함수
 # ------------------------------------------------------------------------------
 def build_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFrame, process: str,
-                           param_type: str | None, equipment: str | None) -> dict:
-    """필터(파라미터 유형/Equipment Model) 조건에 맞는 Revision 변경 이력 + 품질 집계를 만든다.
+                           param_type: str | None, equipment: str | None,
+                           detail_param: str | None = None, targets: dict | None = None) -> dict:
+    """필터(파라미터 유형/세부 파라미터/Equipment Model) 조건에 맞는 Revision 변경 이력 + 품질
+    집계 + 직전 Revision 대비 품질 변화를 만든다.
     - Revision 후보는 Changed_Params_This_Rev 기준(filter_revisions_by_param_type)으로만 결정한다.
+    - detail_param이 주어지면(예: "S1_RF_Bias_W") 그 컬럼이 실제로 바뀐 Revision만 더 좁힌다.
     - Equipment를 특정 장비로 좁혔을 때 해당 장비 평가 기록이 없는 Revision은 결과에서 빠진다.
-    - 이전 값은 Equipment 필터와 무관하게 Recipe_Master 원본 기준으로 계산한다(레시피 조건 자체는
-      장비와 무관하게 하나이므로).
+    - 카드의 "주요 변경"(card_rows)은 detail_param이 아니라 param_type 단위로 묶는다 — 세부
+      파라미터를 하나 골라도 같은 유형의 다른 Step 변경은 여전히 카드에 함께 보여주고,
+      골라낸 항목만 "selected"로 표시한다(다른 유형의 동시 변경은 상세 보기에서만 노출).
+    - 이전 값/이전 품질은 Equipment 필터와 무관하게 Recipe_Master 원본 순서 기준으로 찾되,
+      품질 집계 자체는 지금과 동일한 Equipment 필터를 적용해 비교 대상을 맞춘다.
     """
     matched_entries = filter_revisions_by_param_type(recipe_df, param_type)
+    if detail_param and detail_param != "전체":
+        matched_entries = [e for e in matched_entries if detail_param in e["changed_params"]]
     equipment_wafer_df = filter_wafer_by_equipment(wafer_df, equipment)
 
     results = []
@@ -331,19 +512,42 @@ def build_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFrame, proce
 
         recipe_row = recipe_df[recipe_df["Recipe_Version"] == revision]
         recipe_row = recipe_row.iloc[0] if not recipe_row.empty else None
-        prev_row = previous_revision_row(recipe_df, revision)
-        detail_rows = build_param_change_detail(recipe_row, prev_row, entry["changed_params"])
+        prev_recipe_row = previous_revision_row(recipe_df, revision)
+        detail_rows = build_param_change_detail(recipe_row, prev_recipe_row, entry["changed_params"])
+
+        for row in detail_rows:
+            row["selected"] = bool(detail_param) and detail_param != "전체" and row["param_col"] == detail_param
+
+        type_scoped_cols = set(
+            entry["changed_by_type"].get(param_type, [])
+            if param_type and param_type != "전체" else entry["changed_params"]
+        )
+        card_rows = [r for r in detail_rows if r["param_col"] in type_scoped_cols]
+        card_rows.sort(key=lambda r: not r["selected"])  # 선택된 행이 맨 앞으로
+
+        prev_revision = prev_recipe_row["Recipe_Version"] if prev_recipe_row is not None else None
+        prev_quality = (
+            aggregate_revision_quality(equipment_wafer_df, prev_revision, process)
+            if prev_revision is not None else None
+        )
 
         results.append({
             **entry,
             "quality": quality,
             "detail_rows": detail_rows,
+            "card_rows": card_rows,
+            "prev_revision": prev_revision,
+            "prev_quality": prev_quality,
+            "comparison": compare_revision_quality(quality, prev_quality, targets),
+            "kpi_target_diff": build_target_comparison(quality, targets),
         })
 
     total_wafer = sum(r["quality"]["wafer_count"] for r in results)
     pass_rates = [r["quality"]["pass_rate_mean"] for r in results if r["quality"]["pass_rate_mean"] is not None]
     matched_param_count = sum(
-        len(r["changed_by_type"][param_type]) if param_type and param_type != "전체" else len(r["changed_params"])
+        (1 if (detail_param and detail_param != "전체" and detail_param in r["changed_params"]) else
+         len(r["changed_by_type"].get(param_type, [])) if param_type and param_type != "전체" else
+         len(r["changed_params"]))
         for r in results
     )
 
