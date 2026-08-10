@@ -40,47 +40,32 @@ _DUMMY_CHAMBERS = ["CH-A", "CH-B"]
 # 공정별 Stage 정의
 # ----------------------------------------------------------------------------
 TRENCH_STAGE_DEFS = [
-    {"key": "S1", "label": "S1 (SiON Strip)", "time_col": "S1_Time_s",
+    {"key": "S1", "label": "S1 (SiON Strip)", "material": "SiON", "time_col": "S1_Time_s",
      "gas_cols": ["S1_CF4_sccm", "S1_CHF3_sccm"], "bias_col": "S1_RF_Bias_W", "pressure_col": "S1_Pressure_mT"},
-    {"key": "S2", "label": "S2 (SOC Open)", "time_col": "S2_Time_s",
+    {"key": "S2", "label": "S2 (SOC Open)", "material": "SOC", "time_col": "S2_Time_s",
      "gas_cols": ["S2_O2_sccm", "S2_N2_sccm"], "bias_col": "S2_RF_Bias_W", "pressure_col": "S2_Pressure_mT"},
-    {"key": "S3", "label": "S3 (SiO2 HM)", "time_col": "S3_Time_s",
+    {"key": "S3", "label": "S3 (SiO2 HM)", "material": "SiO2", "time_col": "S3_Time_s",
      "gas_cols": ["S3_CF4_sccm", "S3_C4F8_sccm"], "bias_col": "S3_RF_Bias_W", "pressure_col": "S3_Pressure_mT"},
-    {"key": "S4", "label": "S4 (Si Main)", "time_col": "S4_Time_s",
+    {"key": "S4", "label": "S4 (Si Main)", "material": "Si", "time_col": "S4_Time_s",
      "gas_cols": ["S4_HBr_sccm", "S4_Cl2_sccm"], "bias_col": "S4_RF_Bias_W", "pressure_col": "S4_Pressure_mT"},
 ]
 
 ISOLATION_STAGE_DEFS = [
-    {"key": "S1", "label": "S1 (SiO2 Main Etch)", "time_col": "S1_Time_s",
+    {"key": "S1", "label": "S1 (SiO2 Main Etch)", "material": "SiO2", "time_col": "S1_Time_s",
      "gas_cols": ["S1_CHF3_sccm", "S1_C4F8_sccm", "S1_O2_sccm"], "bias_col": "S1_RF_Bias_W", "pressure_col": "S1_Pressure_mT"},
-    {"key": "S2", "label": "S2 (PolySi Etch)", "time_col": "S2_Time_s",
+    {"key": "S2", "label": "S2 (PolySi Etch)", "material": "PolySi", "time_col": "S2_Time_s",
      "gas_cols": ["S2_HBr_sccm", "S2_Cl2_sccm", "S2_O2_sccm"], "bias_col": "S2_RF_Bias_W", "pressure_col": "S2_Pressure_mT"},
 ]
 
 GATE_STAGE_DEFS = [
-    {"key": "S1", "label": "S1 (PolySi Gate Etch, stop on Gate Oxide)", "time_col": "Time_s",
+    {"key": "S1", "label": "S1 (PolySi Gate Etch, stop on Gate Oxide)", "material": "PolySi", "time_col": "Time_s",
      "gas_cols": ["HBr_sccm", "Cl2_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
 ]
 
 METAL_STAGE_DEFS = [
-    {"key": "S1", "label": "S1 (Al Metal Line Etch, stop on TiN Barrier)", "time_col": "Time_s",
+    {"key": "S1", "label": "S1 (Al Metal Line Etch, stop on TiN Barrier)", "material": "Al", "time_col": "Time_s",
      "gas_cols": ["Cl2_sccm", "BCl3_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
 ]
-
-PROCESS_ETCH_TARGET_MATERIAL = {
-    "isolation": "SiO2 / PolySi (STI)",
-    "trench": "Si (Trench Main), HM: SiO2/SiON",
-    "gate": "PolySi (Gate)",
-    "metal": "Al (Metal Line)",
-}
-# 신규 공정 프리뷰(유사도 기반, 편법)에서 "이 물질과 겹치는 기존 공정"을 찾을 때 쓰는 키워드 집합.
-# 정식 예측이 아니라 참고용 실측 조회이므로 엄격한 물질 DB 대신 단순 키워드 매칭으로 충분하다.
-PROCESS_MATERIAL_KEYWORDS = {
-    "isolation": {"sio2", "polysi", "si", "sti"},
-    "trench": {"sion", "soc", "sio2", "si", "trench"},
-    "gate": {"polysi", "si", "gate"},
-    "metal": {"al", "aluminum", "tin", "metal"},
-}
 
 PROCESS_STAGE_DEFS = {
     "isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS,

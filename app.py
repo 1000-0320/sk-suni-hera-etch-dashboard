@@ -24,7 +24,7 @@ from model import (
     recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
     format_parameter_label, generate_recommendation_reason,
     apply_recommended_changes, build_combined_recipe_table,
-    find_similar_process_references,
+    find_layer_references,
 )
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
@@ -1289,48 +1289,73 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
 
 
 def show_new_process_preview():
-    """신규 공정 품질 프리뷰 (유사도 기반, 편법) — 정식 AI 예측이 아니라
-    물질이 비슷한 기존 학습 공정의 실측 참고값을 보여준다."""
+    """신규 공정 품질 프리뷰 (레이어 조합 기반, 편법) — 정식 AI 예측이 아니라
+    입력한 레이어(물질) 순서를 기존 4개 공정의 Stage들과 대조해 참고값을 보여준다."""
     st.markdown("<div class='section-title'>신규 공정 품질 프리뷰</div>", unsafe_allow_html=True)
     st.caption(
-        "아직 AI 모델이 학습되지 않은 새 공정/레이어를 검토할 때, 물질이 겹치는 기존 학습 공정의 "
-        "**실측 평균값**을 참고자료로 보여줍니다. **AI 예측이 아니며 점수화도 하지 않습니다** — "
-        "정식으로 새 공정을 모델링하려면 그 공정만의 실측 데이터와 검증이 필요합니다."
+        "아직 AI 모델이 없는 새 공정을, **Etch 하려는 레이어(물질)를 순서대로** 입력해서 미리 감을 잡는 "
+        "기능입니다. 한 줄에 레이어 하나씩 입력하세요 — 예: 하드마스크로 SiO2를 먼저 Etch하고, "
+        "그다음 PolySi를 Etch하는 공정이면 첫 줄 SiO2, 둘째 줄 PolySi. "
+        "**AI 예측이 아니며 점수화도 하지 않습니다.**"
     )
-    st.info(
-        "사용 가능한 물질 키워드(여러 개 입력 가능, 띄어쓰기/쉼표로 구분): "
-        "SiO2, PolySi, Si, SiON, SOC, Al, Aluminum, TiN"
+    st.info("사용 가능한 물질: SiO2, SiON, SOC, Si, PolySi, Al")
+
+    layer_text = st.text_area(
+        "신규 공정의 레이어를 위에서부터 순서대로, 한 줄에 하나씩 입력하세요",
+        placeholder="SiO2\nPolySi",
+        height=100,
+        key="new_process_layer_text",
     )
-    material_query = st.text_input(
-        "신규 공정에서 Etch 하려는 물질(Layer)을 입력하세요",
-        placeholder="예: PolySi",
-        key="new_process_material_query",
-    )
-    if not material_query.strip():
+    if not layer_text.strip():
+        return
+    layer_materials = [line for line in layer_text.splitlines() if line.strip()]
+
+    result = find_layer_references(layer_materials)
+    layer_matches = result["layer_matches"]
+    overall = result["overall_reference"]
+
+    st.markdown(f"### 1) 레이어별 참고 Recipe 조건 ({len(layer_matches)}개 레이어)")
+    for i, layer in enumerate(layer_matches, start=1):
+        with st.expander(f"레이어 {i}: {layer['material']}", expanded=True):
+            if not layer["matches"]:
+                st.warning("이 물질과 겹치는 기존 Stage를 찾지 못했습니다.")
+                continue
+            for match in layer["matches"]:
+                st.markdown(f"**{match['process_label']} · {match['stage_label']}**")
+                param_cols = st.columns(len(match["param_ranges"]) + len(match["gas_ranges"]))
+                col_idx = 0
+                for label, (lo, hi) in match["param_ranges"].items():
+                    with param_cols[col_idx]:
+                        render_summary_card(label, f"{lo:g} ~ {hi:g}")
+                    col_idx += 1
+                for label, (lo, hi) in match["gas_ranges"].items():
+                    with param_cols[col_idx]:
+                        render_summary_card(label, f"{lo:g} ~ {hi:g}")
+                    col_idx += 1
+            st.caption("위 범위는 해당 Stage가 16개 Recipe에서 실제로 관측된 값의 최소~최대입니다 (예측값 아님).")
+
+    st.markdown("### 2) 종합 참고 품질")
+    if overall is None:
+        st.warning("입력한 레이어 구성과 겹치는 기존 공정을 찾지 못해 종합 참고 품질을 계산할 수 없습니다.")
         return
 
-    matches = find_similar_process_references(material_query)
-    if not matches:
-        st.warning("입력한 물질과 겹치는 기존 학습 공정을 찾지 못했습니다. 키워드를 다르게 시도해보세요.")
-        return
-
-    st.markdown(f"**물질 '{material_query}'과(와) 겹치는 기존 공정 {len(matches)}건**")
-    rows = [{
-        "공정": m["process_label"],
-        "Etch Target 물질": m["material"],
-        "겹치는 키워드": ", ".join(m["matched_keywords"]),
-        "학습 Wafer 수": m["wafer_count"],
-        "실측 평균 Top CD (nm)": m["avg_top_cd_nm"],
-        "실측 평균 Mid CD (nm)": m["avg_mid_cd_nm"],
-        "실측 평균 Bottom CD (nm)": m["avg_bottom_cd_nm"],
-        "실측 평균 Depth (nm)": m["avg_depth_nm"],
-        "실측 평균 Uniformity (%)": m["avg_uniformity_pct"],
-        "실측 평균 Pass Rate (%)": m["avg_pass_rate_pct"],
-    } for m in matches]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.markdown(
+        f"요청한 {overall['requested_count']}개 레이어 중 **{overall['overlap_count']}개**가 겹치는, "
+        f"가장 비슷한 기존 공정: **{overall['process_label']}** "
+        f"(이 공정의 Stage 물질 구성: {', '.join(overall['process_materials'])})"
+    )
+    ref_cols = st.columns(6)
+    ref_items = [
+        ("Top CD (nm)", overall["avg_top_cd_nm"]), ("Mid CD (nm)", overall["avg_mid_cd_nm"]),
+        ("Bottom CD (nm)", overall["avg_bottom_cd_nm"]), ("Depth (nm)", overall["avg_depth_nm"]),
+        ("Uniformity (%)", overall["avg_uniformity_pct"]), ("Pass Rate (%)", overall["avg_pass_rate_pct"]),
+    ]
+    for col, (label, value) in zip(ref_cols, ref_items):
+        with col:
+            render_summary_card(label, value)
     st.caption(
-        "위 수치는 각 공정의 전체 Recipe·Wafer 실측 평균입니다 — 특정 신규 조건에 대한 예측값이 아니라 "
-        "\"이 물질을 다뤄본 기존 공정들은 대략 이 정도 범위에서 움직였다\"는 방향성 참고용입니다."
+        f"위 수치는 {overall['process_label']} 공정 전체 Wafer {overall['wafer_count']}장의 실측 평균입니다 — "
+        "입력한 레이어 조합 전용 예측값이 아니라, 가장 비슷한 기존 공정 하나를 그대로 보여주는 참고값입니다."
     )
 
 

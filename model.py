@@ -473,43 +473,87 @@ def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recip
 # ==============================================================================
 # 5. 신규 공정 품질 프리뷰 (유사도 기반, 편법) — 정식 예측이 아니라 실측 참고값 조회
 # ==============================================================================
-def find_similar_process_references(material_query: str, exclude_process: str | None = None) -> list[dict]:
-    """아직 학습된 모델이 없는 신규 공정의 Etch Target 물질을 입력하면, 기존에 학습된
-    공정 중 물질이 겹치는 것을 찾아 그 공정의 '실측 평균 품질'을 참고값으로 반환한다.
+def find_layer_references(layer_materials: list[str]) -> dict:
+    """아직 학습된 모델이 없는 신규 공정을, 순서대로 입력한 레이어(물질) 목록으로 정의하면
+    두 가지 참고자료를 편법으로 만들어 보여준다.
 
-    AI 모델로 새 공정을 예측하는 게 아니다 — 정합성 검증 없이 신규 공정을 통째로 모델링하기엔
-    데이터가 부족하므로, 대신 이미 학습된 공정 중 재료가 비슷한 것의 실측 이력을 그대로
-    보여주는 '참고용 프리뷰'다 (멘토님 피드백: 편법으로라도 방향성을 보여달라는 요청 반영).
+    1) 레이어별 참고 Recipe 조건 — 요청한 물질과 같은 Stage를 4개 기존 공정 전체에서 찾아,
+       그 Stage가 실제 관측된 파라미터 범위(Time/RF Bias/Pressure/Gas, 16개 Recipe 기준 min~max)를 보여줌.
+    2) 종합 참고 품질 — 요청한 레이어 구성과 Stage 물질 구성이 가장 많이 겹치는 기존 공정 하나를
+       골라, 그 공정의 실측 평균 최종 CD/Depth/Uniformity/Pass Rate를 보여줌.
+
+    AI로 새 공정 전체를 예측하는 게 아니다. 레이어 단위 관측 범위와, 가장 비슷한 기존 공정의
+    실측 평균만 보여주는 참고용 편법 프리뷰다 (정식 모델링은 그 공정만의 데이터·검증이 필요).
     """
-    from data_utils import PROCESS_MATERIAL_KEYWORDS, PROCESS_ETCH_TARGET_MATERIAL, load_bundled_workbook
+    from data_utils import load_bundled_workbook
 
-    query_tokens = {token.strip().lower() for token in material_query.replace(",", " ").split() if token.strip()}
-    if not query_tokens:
-        return []
+    query_materials = [m.strip().lower() for m in layer_materials if m.strip()]
+    if not query_materials:
+        return {"layer_matches": [], "overall_reference": None}
 
-    matches = []
-    for process, keywords in PROCESS_MATERIAL_KEYWORDS.items():
-        if process == exclude_process:
-            continue
-        overlap = query_tokens & keywords
-        if not overlap:
-            continue
-        wafer_df = load_bundled_workbook(process)["Wafer_Summary"]
-        matches.append({
-            "process": process,
-            "process_label": PROCESS_LABELS[process],
-            "material": PROCESS_ETCH_TARGET_MATERIAL[process],
-            "matched_keywords": sorted(overlap),
-            "wafer_count": int(wafer_df["Wafer_ID"].nunique()),
-            "avg_top_cd_nm": round(float(wafer_df["Top_CD_Mean_nm"].mean()), 1),
-            "avg_mid_cd_nm": round(float(wafer_df["Mid_CD_Mean_nm"].mean()), 1),
-            "avg_bottom_cd_nm": round(float(wafer_df["Bottom_CD_Mean_nm"].mean()), 1),
-            "avg_depth_nm": round(float(wafer_df["Depth_Mean_nm"].mean()), 1),
-            "avg_uniformity_pct": round(float(
-                wafer_df[["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]]
-                .mean().mean()
-            ), 2),
-            "avg_pass_rate_pct": round(float(wafer_df["Overall_Spec_Pass_Rate_pct"].mean()), 1),
-        })
-    matches.sort(key=lambda row: len(row["matched_keywords"]), reverse=True)
-    return matches
+    recipe_cache: dict[str, "pd.DataFrame"] = {}
+
+    def _recipe(process: str):
+        if process not in recipe_cache:
+            recipe_cache[process] = load_bundled_workbook(process)["Recipe_Master"]
+        return recipe_cache[process]
+
+    layer_matches = []
+    for material in query_materials:
+        candidates = []
+        for process, stage_defs in PROCESS_STAGE_DEFS.items():
+            recipe_df = _recipe(process)
+            for stage in stage_defs:
+                if stage.get("material", "").strip().lower() != material:
+                    continue
+                param_ranges = {}
+                for label, col in [
+                    ("Time (s)", stage["time_col"]),
+                    ("RF Bias (W)", stage["bias_col"]),
+                    ("Pressure (mT)", stage["pressure_col"]),
+                ]:
+                    param_ranges[label] = (round(float(recipe_df[col].min()), 2), round(float(recipe_df[col].max()), 2))
+                gas_ranges = {}
+                for gas_col in stage["gas_cols"]:
+                    prefix = f"{stage['key']}_"
+                    gas_name = gas_col[len(prefix):] if gas_col.startswith(prefix) else gas_col
+                    gas_name = gas_name[: -len("_sccm")] if gas_name.endswith("_sccm") else gas_name
+                    gas_ranges[f"{gas_name} (sccm)"] = (
+                        round(float(recipe_df[gas_col].min()), 2), round(float(recipe_df[gas_col].max()), 2)
+                    )
+                candidates.append({
+                    "process": process,
+                    "process_label": PROCESS_LABELS[process],
+                    "stage_label": stage["label"],
+                    "param_ranges": param_ranges,
+                    "gas_ranges": gas_ranges,
+                })
+        layer_matches.append({"material": material, "matches": candidates})
+
+    overall_reference = None
+    best_overlap = 0
+    for process, stage_defs in PROCESS_STAGE_DEFS.items():
+        process_materials = {s.get("material", "").strip().lower() for s in stage_defs}
+        overlap = len(set(query_materials) & process_materials)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            wafer_df = load_bundled_workbook(process)["Wafer_Summary"]
+            overall_reference = {
+                "process": process,
+                "process_label": PROCESS_LABELS[process],
+                "process_materials": sorted(process_materials),
+                "overlap_count": overlap,
+                "requested_count": len(query_materials),
+                "wafer_count": int(wafer_df["Wafer_ID"].nunique()),
+                "avg_top_cd_nm": round(float(wafer_df["Top_CD_Mean_nm"].mean()), 1),
+                "avg_mid_cd_nm": round(float(wafer_df["Mid_CD_Mean_nm"].mean()), 1),
+                "avg_bottom_cd_nm": round(float(wafer_df["Bottom_CD_Mean_nm"].mean()), 1),
+                "avg_depth_nm": round(float(wafer_df["Depth_Mean_nm"].mean()), 1),
+                "avg_uniformity_pct": round(float(
+                    wafer_df[["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]]
+                    .mean().mean()
+                ), 2),
+                "avg_pass_rate_pct": round(float(wafer_df["Overall_Spec_Pass_Rate_pct"].mean()), 1),
+            }
+
+    return {"layer_matches": layer_matches, "overall_reference": overall_reference}
