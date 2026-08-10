@@ -13,7 +13,7 @@ import pandas as pd
 
 from ml_engine import isolation_core, trench_core, gate_core, metal_core
 from ml_engine.scoring import compute_composite_score, _proximity_score, _uniformity_score
-from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
+from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, PROCESS_LABELS, stage_inputs_from_recipe
 
 _CORES = {"isolation": isolation_core, "trench": trench_core, "gate": gate_core, "metal": metal_core}
 _MODEL_DIRS = {
@@ -468,3 +468,48 @@ def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recip
                 "변경": f"{'+' if rec - cur > 0 else ''}{rec - cur:g}{unit}",
             })
     return rows
+
+
+# ==============================================================================
+# 5. 신규 공정 품질 프리뷰 (유사도 기반, 편법) — 정식 예측이 아니라 실측 참고값 조회
+# ==============================================================================
+def find_similar_process_references(material_query: str, exclude_process: str | None = None) -> list[dict]:
+    """아직 학습된 모델이 없는 신규 공정의 Etch Target 물질을 입력하면, 기존에 학습된
+    공정 중 물질이 겹치는 것을 찾아 그 공정의 '실측 평균 품질'을 참고값으로 반환한다.
+
+    AI 모델로 새 공정을 예측하는 게 아니다 — 정합성 검증 없이 신규 공정을 통째로 모델링하기엔
+    데이터가 부족하므로, 대신 이미 학습된 공정 중 재료가 비슷한 것의 실측 이력을 그대로
+    보여주는 '참고용 프리뷰'다 (멘토님 피드백: 편법으로라도 방향성을 보여달라는 요청 반영).
+    """
+    from data_utils import PROCESS_MATERIAL_KEYWORDS, PROCESS_ETCH_TARGET_MATERIAL, load_bundled_workbook
+
+    query_tokens = {token.strip().lower() for token in material_query.replace(",", " ").split() if token.strip()}
+    if not query_tokens:
+        return []
+
+    matches = []
+    for process, keywords in PROCESS_MATERIAL_KEYWORDS.items():
+        if process == exclude_process:
+            continue
+        overlap = query_tokens & keywords
+        if not overlap:
+            continue
+        wafer_df = load_bundled_workbook(process)["Wafer_Summary"]
+        matches.append({
+            "process": process,
+            "process_label": PROCESS_LABELS[process],
+            "material": PROCESS_ETCH_TARGET_MATERIAL[process],
+            "matched_keywords": sorted(overlap),
+            "wafer_count": int(wafer_df["Wafer_ID"].nunique()),
+            "avg_top_cd_nm": round(float(wafer_df["Top_CD_Mean_nm"].mean()), 1),
+            "avg_mid_cd_nm": round(float(wafer_df["Mid_CD_Mean_nm"].mean()), 1),
+            "avg_bottom_cd_nm": round(float(wafer_df["Bottom_CD_Mean_nm"].mean()), 1),
+            "avg_depth_nm": round(float(wafer_df["Depth_Mean_nm"].mean()), 1),
+            "avg_uniformity_pct": round(float(
+                wafer_df[["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]]
+                .mean().mean()
+            ), 2),
+            "avg_pass_rate_pct": round(float(wafer_df["Overall_Spec_Pass_Rate_pct"].mean()), 1),
+        })
+    matches.sort(key=lambda row: len(row["matched_keywords"]), reverse=True)
+    return matches

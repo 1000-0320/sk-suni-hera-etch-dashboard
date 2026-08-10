@@ -24,6 +24,7 @@ from model import (
     recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
     format_parameter_label, generate_recommendation_reason,
     apply_recommended_changes, build_combined_recipe_table,
+    find_similar_process_references,
 )
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
@@ -1287,6 +1288,52 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
     st.markdown(html, unsafe_allow_html=True)
 
 
+def show_new_process_preview():
+    """신규 공정 품질 프리뷰 (유사도 기반, 편법) — 정식 AI 예측이 아니라
+    물질이 비슷한 기존 학습 공정의 실측 참고값을 보여준다."""
+    st.markdown("<div class='section-title'>신규 공정 품질 프리뷰</div>", unsafe_allow_html=True)
+    st.caption(
+        "아직 AI 모델이 학습되지 않은 새 공정/레이어를 검토할 때, 물질이 겹치는 기존 학습 공정의 "
+        "**실측 평균값**을 참고자료로 보여줍니다. **AI 예측이 아니며 점수화도 하지 않습니다** — "
+        "정식으로 새 공정을 모델링하려면 그 공정만의 실측 데이터와 검증이 필요합니다."
+    )
+    st.info(
+        "사용 가능한 물질 키워드(여러 개 입력 가능, 띄어쓰기/쉼표로 구분): "
+        "SiO2, PolySi, Si, SiON, SOC, Al, Aluminum, TiN"
+    )
+    material_query = st.text_input(
+        "신규 공정에서 Etch 하려는 물질(Layer)을 입력하세요",
+        placeholder="예: PolySi",
+        key="new_process_material_query",
+    )
+    if not material_query.strip():
+        return
+
+    matches = find_similar_process_references(material_query)
+    if not matches:
+        st.warning("입력한 물질과 겹치는 기존 학습 공정을 찾지 못했습니다. 키워드를 다르게 시도해보세요.")
+        return
+
+    st.markdown(f"**물질 '{material_query}'과(와) 겹치는 기존 공정 {len(matches)}건**")
+    rows = [{
+        "공정": m["process_label"],
+        "Etch Target 물질": m["material"],
+        "겹치는 키워드": ", ".join(m["matched_keywords"]),
+        "학습 Wafer 수": m["wafer_count"],
+        "실측 평균 Top CD (nm)": m["avg_top_cd_nm"],
+        "실측 평균 Mid CD (nm)": m["avg_mid_cd_nm"],
+        "실측 평균 Bottom CD (nm)": m["avg_bottom_cd_nm"],
+        "실측 평균 Depth (nm)": m["avg_depth_nm"],
+        "실측 평균 Uniformity (%)": m["avg_uniformity_pct"],
+        "실측 평균 Pass Rate (%)": m["avg_pass_rate_pct"],
+    } for m in matches]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption(
+        "위 수치는 각 공정의 전체 Recipe·Wafer 실측 평균입니다 — 특정 신규 조건에 대한 예측값이 아니라 "
+        "\"이 물질을 다뤄본 기존 공정들은 대략 이 정도 범위에서 움직였다\"는 방향성 참고용입니다."
+    )
+
+
 # ==============================================================================
 # 메인 실행부
 # ==============================================================================
@@ -1300,7 +1347,7 @@ def main():
     process = st.session_state.process
     stage_defs = PROCESS_STAGE_DEFS[process]
 
-    tab1, tab2 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard"])
+    tab1, tab2, tab3 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard", "신규 공정 프리뷰"])
 
     # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
     with tab1:
@@ -1492,6 +1539,10 @@ def main():
         show_quality_visualization(filtered_wafer)
         show_wafer_map(filtered_site)
         show_zone_analysis(filtered_site)
+
+    # ---- Tab 3: 신규 공정 프리뷰 (유사도 기반, 편법 — 정식 예측 아님) ----
+    with tab3:
+        show_new_process_preview()
 
     render_recent_quality_sidebar(recent_quality_slot)
 

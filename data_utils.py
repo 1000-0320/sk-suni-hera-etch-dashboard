@@ -67,6 +67,21 @@ METAL_STAGE_DEFS = [
      "gas_cols": ["Cl2_sccm", "BCl3_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
 ]
 
+PROCESS_ETCH_TARGET_MATERIAL = {
+    "isolation": "SiO2 / PolySi (STI)",
+    "trench": "Si (Trench Main), HM: SiO2/SiON",
+    "gate": "PolySi (Gate)",
+    "metal": "Al (Metal Line)",
+}
+# 신규 공정 프리뷰(유사도 기반, 편법)에서 "이 물질과 겹치는 기존 공정"을 찾을 때 쓰는 키워드 집합.
+# 정식 예측이 아니라 참고용 실측 조회이므로 엄격한 물질 DB 대신 단순 키워드 매칭으로 충분하다.
+PROCESS_MATERIAL_KEYWORDS = {
+    "isolation": {"sio2", "polysi", "si", "sti"},
+    "trench": {"sion", "soc", "sio2", "si", "trench"},
+    "gate": {"polysi", "si", "gate"},
+    "metal": {"al", "aluminum", "tin", "metal"},
+}
+
 PROCESS_STAGE_DEFS = {
     "isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS,
     "gate": GATE_STAGE_DEFS, "metal": METAL_STAGE_DEFS,
