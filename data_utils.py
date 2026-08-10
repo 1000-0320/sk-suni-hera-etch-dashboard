@@ -354,7 +354,11 @@ def get_recipe_stage_table(recipe_master_df: pd.DataFrame, recipe_version: str, 
 
     records = []
     for stage in stage_defs:
-        gas_str = " / ".join(f"{c.split('_')[1]} {row[c]:g}sccm" for c in stage["gas_cols"] if c in row.index)
+        def _gas_name(col: str, prefix: str = f"{stage['key']}_") -> str:
+            name = col[len(prefix):] if col.startswith(prefix) else col
+            return name[: -len("_sccm")] if name.endswith("_sccm") else name
+
+        gas_str = " / ".join(f"{_gas_name(c)} {row[c]:g}sccm" for c in stage["gas_cols"] if c in row.index)
         records.append({
             "Stage": stage["label"],
             "Time (s)": row.get(stage["time_col"], None),
