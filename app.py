@@ -10,6 +10,7 @@ isolation / trench 두 공정을 선택할 수 있고, 학습된 RandomForest/XG
 실행: streamlit run app.py
 """
 
+import os
 from datetime import datetime
 from html import escape
 from time import perf_counter
@@ -60,6 +61,12 @@ WAFER_MAP_METRICS = {
 }
 TARGET_MODE_LABEL = "목표 품질 → 레시피 변경점 추천"
 DIRECT_MODE_LABEL = "레시피 조건 직접 입력 → 품질 평가"
+
+# 공정별 Before/After 단면 스키매틱 이미지 (멘토 피드백: 텍스트 카드 대신 그림으로 직관적 표현)
+PROCESS_SCHEMATIC_IMAGES = {
+    "isolation": "assets/process/isolation_schematic.png",
+    "trench": "assets/process/trench_schematic.png",
+}
 
 
 # ==============================================================================
@@ -491,13 +498,15 @@ def create_input_panel():
     wafer_df = workbook["Wafer_Summary"]
     recipe_df = workbook["Recipe_Master"]
 
-    # ---- 공정 기본 정보 ----
+    # ---- 공정 기본 정보 (텍스트 카드 대신 Before/After 단면 스키매틱 — 멘토 피드백) ----
     st.markdown("<div class='section-title'>공정 기본 정보</div>", unsafe_allow_html=True)
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Process Type", PROCESS_LABELS[process])
-    a2.metric("공정 Step 수", f"{len(stage_defs)}-Step")
-    a3.metric("Step1 Layer", stage_defs[0]["label"])
-    a4.metric("마지막 Step Layer", stage_defs[-1]["label"])
+    schematic_path = PROCESS_SCHEMATIC_IMAGES.get(process)
+    if schematic_path and os.path.exists(schematic_path):
+        st.image(schematic_path, use_container_width=True)
+    layer_names = " → ".join(s["label"] for s in stage_defs)
+    st.caption(
+        f"{PROCESS_LABELS[process]} · {len(stage_defs)}-Step · Layer 순서: {layer_names}"
+    )
 
     # ---- 시뮬레이터 모드 (먼저 선택 — 멘토 피드백: 무엇을 할지 먼저 고르게) ----
     st.markdown("<div class='section-title'>시뮬레이터 모드</div>", unsafe_allow_html=True)
