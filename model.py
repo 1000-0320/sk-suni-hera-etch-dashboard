@@ -253,7 +253,25 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
     if filtered_wafer_df is None or filtered_wafer_df.empty:
         return ["선택한 조건에 해당하는 데이터가 없습니다."]
 
-    messages = []
+    summary_messages = []
+    detail_messages = []
+
+    total_wafers = len(filtered_wafer_df)
+    defect_wafers = int((filtered_wafer_df["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).sum())
+    if defect_wafers > 0:
+        summary_messages.append(
+            f"전체 {total_wafers}장 중 {defect_wafers}장의 Wafer에서 Defect(Particle) {PARTICLE_DEFECT_THRESHOLD}건 초과가 발생했습니다."
+        )
+    else:
+        summary_messages.append(f"선택한 조건에서 Defect(Particle) {PARTICLE_DEFECT_THRESHOLD}건 초과 Wafer는 없었습니다.")
+
+    avg_pass_rate = filtered_wafer_df["Overall_Spec_Pass_Rate_pct"].mean()
+    if avg_pass_rate >= 95:
+        summary_messages.append("현재 Recipe는 안정적인 공정으로 판단됩니다.")
+    elif avg_pass_rate >= 90:
+        summary_messages.append("현재 Recipe는 대체로 안정적이나 일부 개선 여지가 있습니다.")
+    else:
+        summary_messages.append(f"현재 Recipe는 평균 Pass Rate {avg_pass_rate:.1f}%로 공정 안정성이 낮아 조건 재검토가 필요합니다.")
 
     if zone_summary is not None and not zone_summary.empty and "Zone" in zone_summary.columns:
         zones = zone_summary.set_index("Zone")
@@ -261,7 +279,7 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
         if "Center" in zones.index and "Extreme Edge" in zones.index:
             bottom_gap = zones.loc["Center", "Bottom CD"] - zones.loc["Extreme Edge", "Bottom CD"]
             if bottom_gap > 10:
-                messages.append(
+                detail_messages.append(
                     f"Extreme Edge Zone의 Bottom CD가 Center 대비 {bottom_gap:.1f}nm 낮아 Edge 테이퍼링이 심화되는 경향이 있습니다."
                 )
 
@@ -269,32 +287,15 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
             worst_zone = zones["Pass Rate"].idxmin()
             worst_value = zones.loc[worst_zone, "Pass Rate"]
             if worst_value < 90:
-                messages.append(f"{worst_zone} Zone의 Pass Rate({worst_value:.1f}%)가 가장 낮게 나타납니다.")
+                detail_messages.append(f"{worst_zone} Zone의 Pass Rate({worst_value:.1f}%)가 가장 낮게 나타납니다.")
 
         if "Defect Rate" in zones.columns and not zones["Defect Rate"].empty:
             worst_defect_zone = zones["Defect Rate"].idxmax()
             worst_defect_value = zones.loc[worst_defect_zone, "Defect Rate"]
             if worst_defect_value > 0:
-                messages.append(f"{worst_defect_zone} Zone에서 Defect 발생 비율({worst_defect_value:.1f}%)이 가장 높습니다.")
+                detail_messages.append(f"{worst_defect_zone} Zone에서 Defect 발생 비율({worst_defect_value:.1f}%)이 가장 높습니다.")
 
-    total_wafers = len(filtered_wafer_df)
-    defect_wafers = int((filtered_wafer_df["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).sum())
-    if defect_wafers > 0:
-        messages.append(
-            f"전체 {total_wafers}장 중 {defect_wafers}장의 Wafer에서 Defect(Particle) {PARTICLE_DEFECT_THRESHOLD}건 초과가 발생했습니다."
-        )
-    else:
-        messages.append(f"선택한 조건에서 Defect(Particle) {PARTICLE_DEFECT_THRESHOLD}건 초과 Wafer는 없었습니다.")
-
-    avg_pass_rate = filtered_wafer_df["Overall_Spec_Pass_Rate_pct"].mean()
-    if avg_pass_rate >= 95:
-        messages.append("현재 Recipe는 안정적인 공정으로 판단됩니다.")
-    elif avg_pass_rate >= 90:
-        messages.append("현재 Recipe는 대체로 안정적이나 일부 개선 여지가 있습니다.")
-    else:
-        messages.append(f"현재 Recipe는 평균 Pass Rate {avg_pass_rate:.1f}%로 공정 안정성이 낮아 조건 재검토가 필요합니다.")
-
-    return messages
+    return summary_messages + detail_messages
 
 
 def recommend_parameter_adjustments(inputs: dict, targets: dict, process: str = "trench", top_n: int = 5,

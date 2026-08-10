@@ -51,7 +51,7 @@ from charts import (
     build_pass_rate_trend_chart, build_particle_chart,
     build_rev_cd_trend_chart, build_rev_depth_trend_chart,
     build_rev_uniformity_trend_chart, build_rev_pass_rate_chart, build_rev_defect_chart,
-    build_wafer_map, build_wafer_profile_chart, build_recipe_score_chart,
+    build_wafer_profile_chart, build_recipe_score_chart,
     build_zone_cd_chart, build_zone_depth_chart, build_zone_spread_chart,
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
@@ -1332,22 +1332,15 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame):
 
 
 # ==============================================================================
-# 4. Wafer Map — Top/Mid/Bottom CD와 Depth를 한 번에 표시 (멘토 피드백 반영)
+# 4. Wafer Profile — Top/Mid/Bottom CD와 Depth를 한 번에 표시 (멘토 피드백 반영)
 # ==============================================================================
-def show_wafer_map(filtered_site: pd.DataFrame):
-    render_dashboard_section_title("Wafer Map (Top/Mid/Bottom CD · Depth 한눈에 비교)", "map", "blue")
+def show_wafer_profile(filtered_site: pd.DataFrame):
+    render_dashboard_section_title("Wafer 단면 Profile (Top/Mid/Bottom CD · Depth 한눈에 비교)", "map", "blue")
     if filtered_site.empty:
         st.info("선택한 조건에 해당하는 Site 데이터가 없습니다.")
         return
 
-    cols = st.columns(4)
-    for col, (label, metric_col) in zip(cols, WAFER_MAP_METRICS.items()):
-        with col:
-            st.plotly_chart(build_wafer_map(filtered_site, metric_col, label), use_container_width=True)
-    st.caption("Zone: Center(중심) → Mid → Edge → Extreme Edge(바깥쪽) · 선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시")
-
-    st.markdown("**Wafer 단면 Profile**")
-    st.caption("x축 = Point 번호. Edge → Center → Edge 순서라 위 2D Wafer Map보다 정확한 수치 비교가 쉽습니다.")
+    st.caption("x축 = Point 번호. Edge → Center → Edge 순서로 표시하며, 선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시")
     profile_items = list(WAFER_MAP_METRICS.items())
     for row_start in range(0, len(profile_items), 2):
         profile_cols = st.columns(2, gap="large")
@@ -2006,8 +1999,8 @@ def main():
             show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"])
             show_quality_visualization(filtered_wafer)
 
-        with st.expander("Wafer Map / Profile 자세히 보기", expanded=False):
-            show_wafer_map(filtered_site)
+        with st.expander("Wafer Profile 자세히 보기", expanded=False):
+            show_wafer_profile(filtered_site)
 
         with st.expander("Zone 분석 자세히 보기", expanded=False):
             show_zone_analysis(filtered_site)
