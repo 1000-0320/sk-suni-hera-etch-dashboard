@@ -1029,42 +1029,42 @@ def show_combined_recipe_section(
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
 def create_process_dashboard_equipment_selector(workbook: dict, process: str):
-    """Equipment만 사용자가 선택하고, Chamber는 대표값을 자동 결정한다.
-    (멘토 피드백: 모든 Chamber가 동일 조건이라는 가정 — Simulator의 get_representative_chamber와 동일 규칙 재사용)"""
+    """Equipment만 사용자가 선택하고, 그 Equipment의 모든 Chamber 데이터를 합쳐서 집계한다.
+    (Chamber별로 대표 1개만 쓰면 나머지 Chamber 데이터가 화면에서 통째로 빠지는 문제가 있어,
+    "대표 Chamber 자동 선택" 대신 "해당 Equipment의 Chamber 전체 통합"으로 바꿨다.)"""
     wafer_df = workbook["Wafer_Summary"]
 
     equipment = st.selectbox(
         "Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}",
     )
 
-    chamber = get_representative_chamber(wafer_df, equipment)
-    chamber_text = escape(str(chamber)) if chamber is not None else "—"
+    chambers = sorted(wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].dropna().unique())
+    chambers_text = escape(", ".join(chambers)) if chambers else "—"
     st.markdown(
         f"""
         <div class="dashboard-context-strip">
             <span>ACTIVE VIEW</span>
-            <strong>{escape(PROCESS_LABELS[process])} · {escape(str(equipment))} · Chamber {chamber_text} (자동)</strong>
+            <strong>{escape(PROCESS_LABELS[process])} · {escape(str(equipment))} · Chamber {len(chambers)}개 통합 ({chambers_text})</strong>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if chamber is None:
+    if not chambers:
         equipment_chamber_wafer = wafer_df.iloc[0:0]
     else:
-        equipment_chamber_wafer = wafer_df[
-            (wafer_df["Equipment_Model"] == equipment) & (wafer_df["Chamber_ID"] == chamber)
-        ]
+        equipment_chamber_wafer = wafer_df[wafer_df["Equipment_Model"] == equipment]
 
-    return equipment, chamber, equipment_chamber_wafer
+    return equipment, chambers, equipment_chamber_wafer
 
 
 def filter_dashboard_by_rev(
     workbook: dict, equipment_chamber_wafer: pd.DataFrame,
-    equipment: str, chamber: str | None, selected_rev: str | None,
+    equipment: str, chambers: list, selected_rev: str | None,
 ):
-    """선택된 Rev로 Wafer_Summary / Site_Level_Raw를 좁혀 상세 섹션에 전달한다."""
-    if chamber is None or selected_rev is None:
+    """선택된 Rev로 Wafer_Summary / Site_Level_Raw를 좁혀 상세 섹션에 전달한다.
+    Chamber는 하나로 좁히지 않고 해당 Equipment의 모든 Chamber를 그대로 포함한다."""
+    if not chambers or selected_rev is None:
         empty_wafer = equipment_chamber_wafer.iloc[0:0]
         return empty_wafer, workbook["Site_Level_Raw"].iloc[0:0]
 
@@ -1073,7 +1073,7 @@ def filter_dashboard_by_rev(
     site_df = workbook["Site_Level_Raw"]
     filtered_site = site_df[
         (site_df["Equipment_Model"] == equipment)
-        & (site_df["Chamber_ID"] == chamber)
+        & (site_df["Chamber_ID"].isin(chambers))
         & (site_df["Recipe_Version"] == selected_rev)
     ]
     return filtered_wafer, filtered_site
@@ -1094,10 +1094,11 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
     ].mean().mean()
     particle_count = int((filtered_wafer["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).sum())
 
+    chambers_used = sorted(filtered_wafer["Chamber_ID"].dropna().unique())
     row1 = st.columns(5)
     row1_items = [
         ("Equipment", filtered_wafer["Equipment_Model"].iloc[0]),
-        ("Chamber", filtered_wafer["Chamber_ID"].iloc[0]),
+        ("Chamber (통합)", ", ".join(chambers_used) if chambers_used else "—"),
         ("Recipe", filtered_wafer["Recipe_Version"].iloc[0]),
         ("Total Wafer 수", f"{total_wafers}"),
         ("평균 Pass Rate", f"{avg_pass_rate:.1f}%"),
@@ -1982,7 +1983,7 @@ def main():
     # → 상세 섹션(AI 분석/Summary/시각화/Wafer Map/Zone 분석)은 expander로 접어 초기 화면을 짧게 유지한다.
     with tab2:
         workbook = get_active_workbook()
-        equipment, chamber, equipment_chamber_wafer = create_process_dashboard_equipment_selector(workbook, process)
+        equipment, chambers, equipment_chamber_wafer = create_process_dashboard_equipment_selector(workbook, process)
 
         dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
         scoreboard, selected_rev = show_recipe_scoreboard(
@@ -1991,7 +1992,7 @@ def main():
         show_dashboard_best_case(scoreboard)
 
         filtered_wafer, filtered_site = filter_dashboard_by_rev(
-            workbook, equipment_chamber_wafer, equipment, chamber, selected_rev,
+            workbook, equipment_chamber_wafer, equipment, chambers, selected_rev,
         )
 
         with st.expander("AI 분석 자세히 보기", expanded=False):
