@@ -11,51 +11,67 @@ predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 
 
 import pandas as pd
 
-from ml_engine import isolation_core, trench_core
+from ml_engine import isolation_core, trench_core, gate_core, metal_core
 from ml_engine.scoring import compute_composite_score, _proximity_score, _uniformity_score
 from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
 
-_CORES = {"isolation": isolation_core, "trench": trench_core}
+_CORES = {"isolation": isolation_core, "trench": trench_core, "gate": gate_core, "metal": metal_core}
 _MODEL_DIRS = {
     "isolation": "ml_engine/isolation_models",
     "trench": "ml_engine/trench_models",
+    "gate": "ml_engine/gate_models",
+    "metal": "ml_engine/metal_models",
 }
 # 각 공정 엔진이 내부적으로 Depth를 어떤 컬럼명/단위로 예측하는지 (isolation은 학습 데이터 원본이 Angstrom)
-_DEPTH_TARGET = {"isolation": "Depth_A", "trench": "Depth_nm"}
-_DEPTH_TO_NM = {"isolation": 0.1, "trench": 1.0}
+_DEPTH_TARGET = {"isolation": "Depth_A", "trench": "Depth_nm", "gate": "Depth_nm", "metal": "Depth_nm"}
+_DEPTH_TO_NM = {"isolation": 0.1, "trench": 1.0, "gate": 1.0, "metal": 1.0}
 
 
 # ==============================================================================
 # 0. 입력 dict(Stage별 UI 값) -> 모델 파라미터 dict 변환
 # ==============================================================================
-def _app_key_for_param(param_col: str) -> str:
-    """PARAMETER_COLUMNS의 실제 컬럼명(예: S1_RF_Bias_W)을 화면 입력 dict의 key(s1_rf_bias)로 변환."""
-    stage = param_col.split("_")[0].lower()
-    if param_col.endswith("_Time_s"):
-        return f"{stage}_time"
-    if param_col.endswith("_RF_Bias_W"):
-        return f"{stage}_rf_bias"
-    if param_col.endswith("_Pressure_mT"):
-        return f"{stage}_pressure"
-    return param_col.lower()  # Gas Flow 컬럼은 그대로 소문자 매칭 (예: S1_CHF3_sccm -> s1_chf3_sccm)
+def _column_app_key_map(stage_defs: list) -> dict:
+    """STAGE_DEFS(time_col/bias_col/pressure_col/gas_cols)를 기준으로 실제 모델 컬럼명 ->
+    화면 입력 dict key 매핑을 만든다. Stage 접두사(S1_ 등)가 있든 없든(1-Stage 공정) 항상 정확하다."""
+    mapping = {}
+    for stage in stage_defs:
+        key = stage["key"].lower()
+        mapping[stage["time_col"]] = f"{key}_time"
+        mapping[stage["bias_col"]] = f"{key}_rf_bias"
+        mapping[stage["pressure_col"]] = f"{key}_pressure"
+        for gas_col in stage["gas_cols"]:
+            mapping[gas_col] = gas_col.lower()
+    return mapping
 
 
-def _recipe_from_inputs(inputs: dict, param_columns: list) -> dict:
-    return {col: float(inputs.get(_app_key_for_param(col), 0.0)) for col in param_columns}
+def _app_key_for_param(param_col: str, stage_defs: list) -> str:
+    """PARAMETER_COLUMNS의 실제 컬럼명을 화면 입력 dict의 key로 변환 (stage_defs 기반)."""
+    return _column_app_key_map(stage_defs)[param_col]
 
 
-def format_parameter_label(param_col: str) -> str:
+def _recipe_from_inputs(inputs: dict, param_columns: list, stage_defs: list) -> dict:
+    key_map = _column_app_key_map(stage_defs)
+    return {col: float(inputs.get(key_map[col], 0.0)) for col in param_columns}
+
+
+def format_parameter_label(param_col: str, stage_defs: list) -> str:
     """모델 파라미터 컬럼명을 Stage·항목·단위가 보이는 UI 라벨로 바꾼다."""
-    stage = param_col.split("_")[0]
-    if param_col.endswith("_Time_s"):
-        return f"{stage} Etch Time [s]"
-    if param_col.endswith("_RF_Bias_W"):
-        return f"{stage} RF Bias [W]"
-    if param_col.endswith("_Pressure_mT"):
-        return f"{stage} Pressure [mT]"
-    if param_col.endswith("_sccm"):
-        gas = param_col.split("_")[1]
-        return f"{stage} {gas} Flow [sccm]"
+    for stage in stage_defs:
+        stage_key = stage["key"]
+        if param_col == stage["time_col"]:
+            return f"{stage_key} Etch Time [s]"
+        if param_col == stage["bias_col"]:
+            return f"{stage_key} RF Bias [W]"
+        if param_col == stage["pressure_col"]:
+            return f"{stage_key} Pressure [mT]"
+        if param_col in stage["gas_cols"]:
+            gas = param_col
+            prefix = f"{stage_key}_"
+            if gas.startswith(prefix):
+                gas = gas[len(prefix):]
+            if gas.endswith("_sccm"):
+                gas = gas[: -len("_sccm")]
+            return f"{stage_key} {gas} Flow [sccm]"
     return param_col
 
 
@@ -74,7 +90,7 @@ def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process:
     equipment = inputs.get("equipment")
     chamber = inputs.get("chamber")
 
-    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
+    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS, PROCESS_STAGE_DEFS[process])
 
     try:
         raw = core.predict_wafer(recipe, equipment, chamber, model_dir=model_dir, allow_out_of_range=allow_out_of_range)
@@ -306,7 +322,7 @@ def recommend_parameter_adjustments(inputs: dict, targets: dict, process: str = 
     model_dir = _MODEL_DIRS[process]
     equipment = inputs.get("equipment")
     chamber = inputs.get("chamber")
-    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
+    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS, PROCESS_STAGE_DEFS[process])
     try:
         return core.recommend_parameter_changes(
             recipe, equipment, chamber, targets, model_dir=model_dir, top_n=top_n,
@@ -400,13 +416,13 @@ def generate_recommendation_reason(suggestion: dict, candidate: dict, targets: d
     return " · ".join(reasons)
 
 
-def apply_recommended_changes(baseline_inputs: dict, recommendations: list) -> tuple[dict, set]:
+def apply_recommended_changes(baseline_inputs: dict, recommendations: list, stage_defs: list) -> tuple[dict, set]:
     """기준 입력값에 추천 후보들을 함께 적용해 조합 Recipe 입력값을 만든다."""
     applied = dict(baseline_inputs)
     changed = set()
     for recommendation in recommendations:
         parameter = recommendation["parameter"]
-        applied[_app_key_for_param(parameter)] = recommendation["proposed"]
+        applied[_app_key_for_param(parameter, stage_defs)] = recommendation["proposed"]
         changed.add(parameter)
     return applied, changed
 
@@ -417,14 +433,14 @@ def build_combined_recipe_table(current_inputs: dict, applied_inputs: dict, stag
     for stage in stage_defs:
         raw_columns = [stage["time_col"], stage["bias_col"], stage["pressure_col"], *stage["gas_cols"]]
         for raw_column in raw_columns:
-            app_key = _app_key_for_param(raw_column)
+            app_key = _app_key_for_param(raw_column, stage_defs)
             current_value = current_inputs.get(app_key)
             applied_value = applied_inputs.get(app_key)
             if current_value is None or applied_value is None:
                 continue
             rows.append({
                 "Stage": stage["key"],
-                "Parameter": format_parameter_label(raw_column),
+                "Parameter": format_parameter_label(raw_column, stage_defs),
                 "기준 Recipe": float(current_value),
                 "추천 적용값": float(applied_value),
             })

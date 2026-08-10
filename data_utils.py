@@ -57,8 +57,24 @@ ISOLATION_STAGE_DEFS = [
      "gas_cols": ["S2_HBr_sccm", "S2_Cl2_sccm", "S2_O2_sccm"], "bias_col": "S2_RF_Bias_W", "pressure_col": "S2_Pressure_mT"},
 ]
 
-PROCESS_STAGE_DEFS = {"isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS}
-PROCESS_LABELS = {"isolation": "Isolation (STI) Etch", "trench": "Trench Etch"}
+GATE_STAGE_DEFS = [
+    {"key": "S1", "label": "S1 (PolySi Gate Etch, stop on Gate Oxide)", "time_col": "Time_s",
+     "gas_cols": ["HBr_sccm", "Cl2_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
+]
+
+METAL_STAGE_DEFS = [
+    {"key": "S1", "label": "S1 (Al Metal Line Etch, stop on TiN Barrier)", "time_col": "Time_s",
+     "gas_cols": ["Cl2_sccm", "BCl3_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
+]
+
+PROCESS_STAGE_DEFS = {
+    "isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS,
+    "gate": GATE_STAGE_DEFS, "metal": METAL_STAGE_DEFS,
+}
+PROCESS_LABELS = {
+    "isolation": "Isolation (STI) Etch", "trench": "Trench Etch",
+    "gate": "Gate PolySi Etch", "metal": "Metal (Al) Etch",
+}
 
 # 하위 호환용 기본값(과거 코드가 STAGE_DEFS를 직접 참조하던 부분 대비)
 STAGE_DEFS = TRENCH_STAGE_DEFS
@@ -70,6 +86,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DATA_FILES = {
     "isolation": os.path.join(BASE_DIR, "data", "isolation_dataset.xlsx"),
     "trench": os.path.join(BASE_DIR, "data", "trench_dataset.xlsx"),
+    "gate": os.path.join(BASE_DIR, "data", "gate_dataset.xlsx"),
+    "metal": os.path.join(BASE_DIR, "data", "metal_dataset.xlsx"),
 }
 
 

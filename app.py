@@ -812,7 +812,7 @@ def show_comparison(current_result: dict, current_score: dict, recommendation: d
 # ==============================================================================
 # Output E. 파라미터별 조정 제안 (AI 추천 — Recipe 단위가 아니라 파라미터 단위)
 # ==============================================================================
-def show_parameter_recommendations(suggestion: dict, targets: dict):
+def show_parameter_recommendations(suggestion: dict, targets: dict, stage_defs: list):
     st.markdown("<div class='section-title'>파라미터별 조정 제안</div>", unsafe_allow_html=True)
     st.caption(
         "입력한 조건을 출발점으로 파라미터를 하나씩 바꾸며 목표 품질에 가까워지는 방향을 찾았습니다. "
@@ -834,7 +834,7 @@ def show_parameter_recommendations(suggestion: dict, targets: dict):
     top = recommendations[0]
     st.markdown(f"**추천 조정 {len(recommendations)}건**")
     st.caption(
-        f"가장 큰 개선 후보 · {format_parameter_label(top['parameter'])} "
+        f"가장 큰 개선 후보 · {format_parameter_label(top['parameter'], stage_defs)} "
         f"{direction_kr.get(top['direction'], top['direction'])}"
     )
 
@@ -846,7 +846,7 @@ def show_parameter_recommendations(suggestion: dict, targets: dict):
             reason = "목표 품질 점수 개선"
         rows.append({
             "순위": rank,
-            "Parameter": format_parameter_label(recommendation["parameter"]),
+            "Parameter": format_parameter_label(recommendation["parameter"], stage_defs),
             "방향": direction_kr.get(recommendation["direction"], recommendation["direction"]),
             "현재값": float(recommendation["current"]),
             "제안값": float(recommendation["proposed"]),
@@ -895,7 +895,7 @@ def show_combined_recipe_section(
     target_signature = tuple(sorted((key, float(value)) for key, value in targets.items()))
 
     def build_combo(allow_out_of_range: bool = False):
-        applied_inputs, changed_parameters = apply_recommended_changes(baseline_inputs, recommendations)
+        applied_inputs, changed_parameters = apply_recommended_changes(baseline_inputs, recommendations, stage_defs)
         with st.status("추천 변경안 조합을 다시 예측하는 중...", expanded=False) as combo_status:
             combo_result = predict(
                 applied_inputs,
@@ -1367,7 +1367,7 @@ def main():
                     show_target_diagnosis(baseline_result, targets)
                     st.markdown("---")
                     suggestion = st.session_state.get("target_mode_suggestion")
-                    show_parameter_recommendations(suggestion, targets)
+                    show_parameter_recommendations(suggestion, targets, stage_defs)
                     st.markdown("---")
                     show_combined_recipe_section(
                         inputs,

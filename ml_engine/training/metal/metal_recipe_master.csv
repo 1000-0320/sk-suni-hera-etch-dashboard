@@ -1,0 +1,17 @@
+﻿Recipe_Version,Avg_Param_Closure_to_Optimal_pct,Changed_Params_This_Rev,Time_s,Cl2_sccm,BCl3_sccm,RF_Bias_W,Pressure_mT,Change_Notes
+Base,0,(no change),40.0,60,40.0,120,12.0,초기 양산 이관 레시피. 산포/스펙이탈 개선 필요.
+Rev1,12,RF_Bias_W,40.0,60,40.0,138,12.0,RF Bias 조정(1차): 이온 수직성 개선.
+Rev2,24,Pressure_mT,40.0,60,40.0,138,9.6,Pressure 조정(1차): 프로파일/균일도 개선.
+Rev3,57,"Cl2_sccm, BCl3_sccm",40.0,70,33.5,138,9.6,Gas Ratio 확정(1차) + 2차 가스 조정(1차): CD 안정화.
+Rev4,57,(no change),40.0,70,33.5,138,9.6,변경 없음 (확인 런).
+Rev5,70,Time_s,43.25,70,33.5,138,9.6,Time 조정(1차): Depth 수렴 시작.
+Rev6,77,BCl3_sccm,43.25,70,30.0,138,9.6,2차 가스 확정: Bottom CD 타이트닝.
+Rev7,77,(no change),43.25,70,30.0,138,9.6,변경 없음 (확인 런).
+Rev8,85,RF_Bias_W,43.25,70,30.0,150,9.6,RF Bias 확정(최종).
+Rev9,85,(no change),43.25,70,30.0,150,9.6,변경 없음 (확인 런).
+Rev10,93,Pressure_mT,43.25,70,30.0,150,8.0,Pressure 확정(최종): 균일도 마무리.
+Rev11,93,(no change),43.25,70,30.0,150,8.0,변경 없음 (확인 런).
+Rev12,100,Time_s,45.0,70,30.0,150,8.0,Time 확정(최종): Depth 수렴 완료.
+Rev13,100,(no change),45.0,70,30.0,150,8.0,변경 없음 (확인 런).
+Rev14,100,(no change),45.0,70,30.0,150,8.0,변경 없음 (확인 런).
+Rev15,100,(no change),45.0,70,30.0,150,8.0,변경 없음 (최종 확인 런). 전 파라미터 수렴 완료.
