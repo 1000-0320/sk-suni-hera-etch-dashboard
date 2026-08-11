@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from html import escape
+from pathlib import Path
 from time import perf_counter
 from zoneinfo import ZoneInfo
 
@@ -53,7 +54,7 @@ from charts import (
     build_pass_rate_trend_chart, build_particle_chart,
     build_rev_cd_trend_chart, build_rev_depth_trend_chart,
     build_rev_uniformity_trend_chart, build_rev_pass_rate_chart, build_rev_defect_chart,
-    build_wafer_profile_chart, build_recipe_score_chart, build_rev_comparison_chart,
+    build_recipe_score_chart, build_rev_comparison_chart,
     build_zone_cd_chart, build_zone_depth_chart, build_zone_spread_chart,
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
@@ -63,9 +64,10 @@ from login_page import render_login_page, render_sidebar_logout
 st.set_page_config(page_title="Etch AI Decision Support System", page_icon="🧪", layout="wide")
 inject_custom_css()
 
-# Wafer Map에서 한 번에 보여줄 지표들 (표시용 라벨 -> Site_Level_Raw 실제 컬럼명)
-WAFER_MAP_METRICS = {
-    "Top CD": "Top_CD_nm", "Mid CD": "Mid_CD_nm", "Bottom CD": "Bottom_CD_nm", "Depth": "Depth_nm",
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+PROCESS_CROSS_SECTION_IMAGES = {
+    "isolation": ASSETS_DIR / "isolation_cross_section.png",
+    "trench": ASSETS_DIR / "trench_cross_section.png",
 }
 TARGET_MODE_LABEL = "목표품질 달성을 위한 레시피 변경점 추천"
 DIRECT_MODE_LABEL = "레시피 조건을 직접 입력하여 품질 평가"
@@ -210,7 +212,7 @@ def create_process_selector():
         unsafe_allow_html=True,
     )
 
-    selector_col, _ = st.columns([2.8, 2.2], gap="medium")
+    selector_col, equipment_col, image_col = st.columns([1.55, 1.55, 1.9], gap="large")
     with selector_col:
         st.markdown('<div class="process-selector-anchor">ACTIVE PROCESS</div>', unsafe_allow_html=True)
         selected = st.radio(
@@ -230,6 +232,27 @@ def create_process_selector():
         st.session_state.target_mode_baseline = None
         st.session_state.target_mode_suggestion = None
         st.session_state.target_mode_combo = None
+
+    process = st.session_state.process
+    equipment_options = sorted(get_active_workbook()["Wafer_Summary"]["Equipment_Model"].unique())
+    equipment_key = f"top_equipment_{process}"
+    if st.session_state.get(equipment_key) not in equipment_options and equipment_options:
+        st.session_state[equipment_key] = equipment_options[0]
+
+    with equipment_col:
+        st.markdown('<div class="process-selector-anchor">EQUIPMENT</div>', unsafe_allow_html=True)
+        st.radio(
+            "장비 선택",
+            equipment_options,
+            horizontal=True,
+            label_visibility="collapsed",
+            key=equipment_key,
+        )
+
+    with image_col:
+        cross_section_path = PROCESS_CROSS_SECTION_IMAGES.get(process)
+        if cross_section_path and cross_section_path.exists():
+            st.image(str(cross_section_path), caption=f"{PROCESS_LABELS[process]} 단면 Schematic", use_container_width=True)
 
 
 # ==============================================================================
@@ -533,16 +556,14 @@ def create_input_panel():
         horizontal=True, key=f"mode_{process}",
     )
 
-    # ---- 장비 선택 (Chamber는 자동 대표값 사용 — 멘토 피드백: 모든 Chamber 동일 조건으로 가정) ----
-    st.markdown("<div class='section-title'>장비 선택</div>", unsafe_allow_html=True)
-    b1, b2 = st.columns(2)
-    with b1:
-        equipment = st.selectbox("Equipment Model", sorted(wafer_df["Equipment_Model"].unique()), key=f"eq_{process}")
+    # ---- Recipe 선택 (Equipment는 상단 ACTIVE PROCESS 옆 선택을 그대로 사용, Chamber는 자동 대표값 — 멘토 피드백: 모든 Chamber 동일 조건으로 가정) ----
+    st.markdown("<div class='section-title'>Recipe 선택</div>", unsafe_allow_html=True)
+    equipment_options = sorted(wafer_df["Equipment_Model"].unique())
+    equipment = st.session_state.get(f"top_equipment_{process}") or (equipment_options[0] if equipment_options else None)
     chamber = get_representative_chamber(wafer_df, equipment)
     recipe_options = ordered_recipe_versions(recipe_df)
-    with b2:
-        recipe = st.selectbox("Recipe (참고용 베이스라인)", recipe_options, key=f"recipe_{process}")
-    st.caption(f"Chamber는 모든 Chamber가 동일하다는 가정으로 대표값(`{chamber}`)을 자동 사용합니다.")
+    recipe = st.selectbox("Recipe (참고용 베이스라인)", recipe_options, key=f"recipe_{process}")
+    st.caption(f"Equipment: **{equipment}** · Chamber는 모든 Chamber가 동일하다는 가정으로 대표값(`{chamber}`)을 자동 사용합니다.")
 
     stage_table = get_recipe_stage_table(recipe_df, recipe, stage_defs)
     if not stage_table.empty:
@@ -1056,15 +1077,20 @@ def show_combined_recipe_section(
 # ==============================================================================
 # 2-1 / 2-2. Process Dashboard — 조건 선택 + Summary
 # ==============================================================================
+def reset_process_dashboard_filters(process: str) -> None:
+    """Process Dashboard의 필터를 해당 공정 기본값으로 되돌린다."""
+    for key in (f"top_equipment_{process}", f"pd_chamber_{process}", f"pd_recipe_{process}"):
+        st.session_state.pop(key, None)
+
+
 def create_process_dashboard_equipment_selector(workbook: dict, process: str):
-    """Equipment만 사용자가 선택하고, 그 Equipment의 모든 Chamber 데이터를 합쳐서 집계한다.
+    """Equipment는 상단 ACTIVE PROCESS 옆 공용 선택을 그대로 쓰고, 그 Equipment의 모든 Chamber 데이터를 합쳐서 집계한다.
     (Chamber별로 대표 1개만 쓰면 나머지 Chamber 데이터가 화면에서 통째로 빠지는 문제가 있어,
     "대표 Chamber 자동 선택" 대신 "해당 Equipment의 Chamber 전체 통합"으로 바꿨다.)"""
     wafer_df = workbook["Wafer_Summary"]
 
-    equipment = st.selectbox(
-        "Equipment", sorted(wafer_df["Equipment_Model"].unique()), key=f"pd_equipment_{process}",
-    )
+    equipment_options = sorted(wafer_df["Equipment_Model"].unique())
+    equipment = st.session_state.get(f"top_equipment_{process}") or (equipment_options[0] if equipment_options else None)
 
     chambers = sorted(wafer_df.loc[wafer_df["Equipment_Model"] == equipment, "Chamber_ID"].dropna().unique())
     chambers_text = escape(", ".join(chambers)) if chambers else "—"
@@ -1408,27 +1434,6 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame, targets: dict):
         st.plotly_chart(build_pass_rate_trend_chart(wafer_df), use_container_width=True)
     with row3[1]:
         st.plotly_chart(build_particle_chart(wafer_df), use_container_width=True)
-
-
-# ==============================================================================
-# 4. Wafer Profile — Top/Mid/Bottom CD와 Depth를 한 번에 표시 (멘토 피드백 반영)
-# ==============================================================================
-def show_wafer_profile(filtered_site: pd.DataFrame):
-    render_dashboard_section_title("Wafer 단면 Profile (Top/Mid/Bottom CD · Depth 한눈에 비교)", "map", "blue")
-    if filtered_site.empty:
-        st.info("선택한 조건에 해당하는 Site 데이터가 없습니다.")
-        return
-
-    st.caption(
-        "x축은 Point 번호로 ExtEdge → Edge → Center → Edge → ExtEdge 순서로 표시하며, "
-        "선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시합니다."
-    )
-    profile_items = list(WAFER_MAP_METRICS.items())
-    for row_start in range(0, len(profile_items), 2):
-        profile_cols = st.columns(2, gap="large")
-        for col, (label, metric_col) in zip(profile_cols, profile_items[row_start:row_start + 2]):
-            with col:
-                st.plotly_chart(build_wafer_profile_chart(filtered_site, metric_col, label), use_container_width=True)
 
 
 # ==============================================================================
@@ -2165,9 +2170,6 @@ def main():
 
         with st.expander("Wafer 단위 품질 결과", expanded=False):
             show_quality_visualization(filtered_wafer, dashboard_targets)
-
-        with st.expander("Wafer Profile", expanded=False):
-            show_wafer_profile(filtered_site)
 
         with st.expander("Zone별 분석", expanded=False):
             show_zone_analysis(filtered_site)
