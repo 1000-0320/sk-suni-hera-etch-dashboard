@@ -49,6 +49,8 @@ def load_process_config(path: str | None = None) -> dict:
     fallback = {
         "isolation": {"depth_mean_col": "Depth_Mean_nm", "depth_std_col": "Depth_Std_nm", "depth_unit": "nm"},
         "trench": {"depth_mean_col": "Depth_Mean_nm", "depth_std_col": "Depth_Std_nm", "depth_unit": "nm"},
+        "gate": {"depth_mean_col": "Depth_Mean_nm", "depth_std_col": "Depth_Std_nm", "depth_unit": "nm"},
+        "metal": {"depth_mean_col": "Depth_Mean_nm", "depth_std_col": "Depth_Std_nm", "depth_unit": "nm"},
     }
     try:
         with open(target, "r", encoding="utf-8") as f:
@@ -80,20 +82,23 @@ def parse_changed_params(raw_value) -> list:
 
 def classify_param_type(param_col: str) -> str | None:
     """실제 컬럼명(S1_RF_Bias_W 등)을 4가지 변경 파라미터 유형 중 하나로 분류.
-    분리된 컬럼명 접미사를 정확히 검사하며, 매칭되는 유형이 없으면 None."""
+    분리된 컬럼명 접미사를 정확히 검사하며, 매칭되는 유형이 없으면 None.
+    1-Stage 공정(gate/metal)은 접두사가 없어 컬럼명이 접미사와 정확히 같으므로(예: "RF_Bias_W")
+    그 경우도 함께 매칭한다."""
     if not isinstance(param_col, str):
         return None
     for label, suffix in _PARAM_TYPE_SUFFIXES:
-        if param_col.endswith(suffix):
+        if param_col.endswith(suffix) or param_col == suffix.lstrip("_"):
             return label
     return None
 
 
-def format_short_step_label(param_col: str) -> str:
+def format_short_step_label(param_col: str, stage_defs: list | None = None) -> str:
     """Revision 카드의 "주요 변경" 목록에 쓰는 짧은 라벨 (예: "Step 1 · Time")."""
     if not isinstance(param_col, str):
         return str(param_col)
-    stage_num = param_col.split("_")[0].replace("S", "")
+    stage_key = _stage_key_for_param(param_col, stage_defs) if stage_defs else param_col.split("_")[0]
+    stage_num = stage_key.replace("S", "")
     param_type = classify_param_type(param_col)
     return f"Step {stage_num} · {param_type}" if param_type else param_col
 
@@ -118,15 +123,17 @@ def format_detail_param_label(param_col: str, process: str) -> str:
     Gas Flow / Ratio는 가스 종류 자체가 식별자라 Stage 설명 없이 짧게 표시한다(예: "S1 CF4 Flow")."""
     if not isinstance(param_col, str):
         return str(param_col)
-    stage_key = param_col.split("_")[0]
+    stage_defs = PROCESS_STAGE_DEFS.get(process, [])
+    stage_key = _stage_key_for_param(param_col, stage_defs)
     param_type = classify_param_type(param_col)
     if param_type in ("Time", "Pressure", "RF Bias"):
         stage_label = _stage_label_for_process(stage_key, process)
         suffix = {"Time": "Etch Time", "Pressure": "Pressure", "RF Bias": "RF Bias"}[param_type]
         return f"{stage_label} {suffix}"
     if param_type == "Gas Flow / Ratio":
-        parts = param_col.split("_")
-        gas = parts[1] if len(parts) > 1 else param_col
+        prefix = f"{stage_key}_"
+        gas = param_col[len(prefix):] if param_col.startswith(prefix) else param_col
+        gas = gas[: -len("_sccm")] if gas.endswith("_sccm") else gas
         return f"{stage_key} {gas} Flow"
     return param_col
 
@@ -241,7 +248,15 @@ def filter_revisions_by_param_type(recipe_df: pd.DataFrame, param_type: str | No
 # ------------------------------------------------------------------------------
 # 변경 상세 (이전 값 -> 변경 값 -> 변화량/변화율)
 # ------------------------------------------------------------------------------
-def build_param_change_detail(recipe_row, prev_row, changed_params: list) -> list:
+def _stage_key_for_param(col: str, stage_defs: list) -> str:
+    """Stage 접두사가 있든 없든(1-Stage 공정) stage_defs 기준으로 정확한 Stage key를 찾는다."""
+    for stage in stage_defs:
+        if col in (stage["time_col"], stage["bias_col"], stage["pressure_col"]) or col in stage["gas_cols"]:
+            return stage["key"]
+    return col.split("_")[0]
+
+
+def build_param_change_detail(recipe_row, prev_row, changed_params: list, stage_defs: list) -> list:
     """한 Revision에서 실제로 바뀐 각 파라미터에 대해 이전 값/변경 값/변화량/변화율을 계산.
     이전 Revision이 없거나, 이전/현재 값이 없거나 숫자가 아니면 해당 항목만 N/A로 표시하고
     나머지 항목 계산에는 영향을 주지 않는다."""
@@ -272,10 +287,10 @@ def build_param_change_detail(recipe_row, prev_row, changed_params: list) -> lis
 
         rows.append({
             "param_col": col,
-            "label": format_parameter_label(col),
-            "short_label": format_short_step_label(col),
+            "label": format_parameter_label(col, stage_defs),
+            "short_label": format_short_step_label(col, stage_defs),
             "unit": get_param_unit(col),
-            "stage": col.split("_")[0],
+            "stage": _stage_key_for_param(col, stage_defs),
             "param_type": classify_param_type(col),
             "prev_value": prev_value if prev_value is None or pd.notna(prev_value) else None,
             "new_value": new_value if new_value is None or pd.notna(new_value) else None,
@@ -513,7 +528,9 @@ def build_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFrame, proce
         recipe_row = recipe_df[recipe_df["Recipe_Version"] == revision]
         recipe_row = recipe_row.iloc[0] if not recipe_row.empty else None
         prev_recipe_row = previous_revision_row(recipe_df, revision)
-        detail_rows = build_param_change_detail(recipe_row, prev_recipe_row, entry["changed_params"])
+        detail_rows = build_param_change_detail(
+            recipe_row, prev_recipe_row, entry["changed_params"], PROCESS_STAGE_DEFS[process]
+        )
 
         for row in detail_rows:
             row["selected"] = bool(detail_param) and detail_param != "전체" and row["param_col"] == detail_param

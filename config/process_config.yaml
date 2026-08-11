@@ -13,3 +13,13 @@ trench:
   depth_mean_col: Depth_Mean_nm
   depth_std_col: Depth_Std_nm
   depth_unit: nm
+
+gate:
+  depth_mean_col: Depth_Mean_nm
+  depth_std_col: Depth_Std_nm
+  depth_unit: nm
+
+metal:
+  depth_mean_col: Depth_Mean_nm
+  depth_std_col: Depth_Std_nm
+  depth_unit: nm
