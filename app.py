@@ -1501,11 +1501,10 @@ def show_new_process_preview():
     입력한 레이어(물질) 순서를 기존 4개 공정의 Stage들과 대조해 참고값을 보여준다."""
     st.markdown("<div class='section-title'>신규 공정 품질 프리뷰</div>", unsafe_allow_html=True)
     st.caption(
-        "아직 AI 모델이 없는 새 공정을, **Etch 하려는 레이어(물질)를 순서대로** 선택해서 미리 감을 잡는 "
-        "기능입니다. 위에서부터 Etch 순서대로 레이어를 채워주세요 — 예: 하드마스크로 SiO2를 먼저 Etch하고, "
-        "그다음 PolySi를 Etch하는 공정이면 레이어 1은 SiO2, 레이어 2는 PolySi. "
+        "아직 AI 모델이 없는 새 공정을, Etch 순서대로 레이어(물질)를 선택해서 미리 감을 잡는 기능입니다. "
         "**AI 예측이 아니며 점수화도 하지 않습니다.**"
     )
+    st.caption("예: SiO2를 먼저 Etch하고 PolySi를 그다음 Etch한다면 → 레이어 1 SiO2, 레이어 2 PolySi")
 
     material_options = sorted({
         stage["material"] for stage_defs in PROCESS_STAGE_DEFS.values() for stage in stage_defs
@@ -1539,8 +1538,8 @@ def show_new_process_preview():
     overall = result["overall_reference"]
 
     st.markdown(f"### 1) 레이어별 참고 Recipe 조건 ({len(layer_matches)}개 레이어)")
-    for i, layer in enumerate(layer_matches, start=1):
-        with st.expander(f"레이어 {i}: {layer['material']}", expanded=True):
+    for i, (material_label, layer) in enumerate(zip(layer_materials, layer_matches), start=1):
+        with st.expander(f"레이어 {i}: {material_label}", expanded=True):
             if not layer["matches"]:
                 st.warning("이 물질과 겹치는 기존 Stage를 찾지 못했습니다.")
                 continue

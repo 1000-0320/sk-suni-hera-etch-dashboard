@@ -541,15 +541,20 @@ def find_layer_references(layer_materials: list[str]) -> dict:
     overall_reference = None
     best_overlap = 0
     for process, stage_defs in PROCESS_STAGE_DEFS.items():
-        process_materials = {s.get("material", "").strip().lower() for s in stage_defs}
-        overlap = len(set(query_materials) & process_materials)
+        # 매칭은 소문자 기준으로 하되, 화면 표시용으로는 원래 대소문자(PROCESS_STAGE_DEFS 표기)를 남긴다.
+        material_display_by_lower = {}
+        for s in stage_defs:
+            material = s.get("material", "").strip()
+            if material:
+                material_display_by_lower.setdefault(material.lower(), material)
+        overlap = len(set(query_materials) & material_display_by_lower.keys())
         if overlap > best_overlap:
             best_overlap = overlap
             wafer_df = load_bundled_workbook(process)["Wafer_Summary"]
             overall_reference = {
                 "process": process,
                 "process_label": PROCESS_LABELS[process],
-                "process_materials": sorted(process_materials),
+                "process_materials": sorted(material_display_by_lower.values()),
                 "overlap_count": overlap,
                 "requested_count": len(query_materials),
                 "wafer_count": int(wafer_df["Wafer_ID"].nunique()),
