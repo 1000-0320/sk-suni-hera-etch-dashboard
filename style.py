@@ -741,7 +741,7 @@ def inject_custom_css():
             box-sizing: border-box;
             margin: 0 0 0.3rem 0;
             padding: 0 0.75rem;
-            font-size: 0.78rem;
+            font-size: 0.92rem;
             font-weight: 700;
             line-height: 1;
             color: {COLORS['text_secondary']};
@@ -765,9 +765,9 @@ def inject_custom_css():
             color: {COLORS['muted']};
         }}
         .current-target-value {{
-            justify-content: flex-start;
+            justify-content: center;
             padding-left: 0;
-            font-size: 0.95rem;
+            font-size: 1.05rem;
             font-weight: 400;
             font-variant-numeric: tabular-nums;
             color: {COLORS['text_primary']};
@@ -783,6 +783,10 @@ def inject_custom_css():
             height: 2.5rem !important;
             min-height: 2.5rem !important;
             box-sizing: border-box !important;
+        }}
+        /* '변경 목표' 입력창 숫자 폰트도 현재 기준값 숫자와 같은 크기로 (다른 number_input에는 영향 없음) */
+        div[class*="st-key-target_value_input_"] [data-testid="stNumberInputField"] {{
+            font-size: 1.05rem !important;
         }}
 
         /* 종합 품질 점수 히어로 */

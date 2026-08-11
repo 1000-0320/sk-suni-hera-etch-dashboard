@@ -544,7 +544,7 @@ def create_input_panel():
     # ---- 목표 품질 설정 (현재 기준값 → 변경 목표 형식) ----
     st.markdown("<div class='section-title'>목표 품질 설정</div>", unsafe_allow_html=True)
     st.caption(
-        "현재 기준값은 Base Recipe의 실측 평균입니다. 원하는 변경 목표를 입력하면 "
+        f"현재 기준값은 '{recipe}' Recipe의 실측 평균입니다. 원하는 변경 목표를 입력하면 "
         "해당 목표에 가까워지기 위한 Recipe 변경점을 추천합니다."
     )
 
