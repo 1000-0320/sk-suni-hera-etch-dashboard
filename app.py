@@ -570,46 +570,79 @@ def create_input_panel():
         st.markdown(f"**Recipe '{recipe}' 실제 Stage 조건 (참고용)**")
         st.dataframe(stage_table, use_container_width=True, hide_index=True)
 
-    # ---- 목표 품질 설정 (참고값 → 목표값 형식 — 멘토 피드백) ----
+    # ---- 목표 품질 설정 (현재 기준값 → 변경 목표 형식) ----
     st.markdown("<div class='section-title'>목표 품질 설정</div>", unsafe_allow_html=True)
-    st.caption(f"'{recipe}' Recipe의 실측 평균이 각 입력창 위 참고값으로 표시됩니다. 아래 입력창에 원하는 목표값을 입력하세요.")
-    defaults = get_default_targets(wafer_df, recipe_df, recipe)
+    st.caption(
+        f"현재 기준값은 '{recipe}' Recipe의 실측 평균입니다. 원하는 변경 목표를 입력하면 "
+        "해당 목표에 가까워지기 위한 Recipe 변경점을 추천합니다."
+    )
+
+    # current_targets: Equipment/Base Recipe 선택 조합에서 매 rerun마다 새로 계산되는 읽기 전용 기준값.
+    current_targets = get_default_targets(wafer_df, recipe_df, recipe)
+    defaults = current_targets  # 아래 Uniformity/Pass Rate/Defect Count 입력은 기존 그대로 이 값을 참조한다.
+
+    # edited_targets: 사용자가 입력한 변경 목표(각 number_input의 session_state 값 자체가 저장소 역할).
+    # Equipment 또는 Base Recipe가 바뀔 때만 current_targets로 재초기화하고, 그 외 rerun에서는 그대로 유지한다.
+    baseline_sig_key = f"target_baseline_sig_{process}"
+    baseline_sig = (equipment, recipe)
+    if st.session_state.get(baseline_sig_key) != baseline_sig:
+        st.session_state[baseline_sig_key] = baseline_sig
+        for field, value in current_targets.items():
+            st.session_state[f"target_input_{field}_{process}"] = value
+
+    def _target_change_row(label: str, unit: str, field: str, decimals: int = 1):
+        """'{label} ({unit})' 제목 아래, 라벨 행과 값 행을 별도 columns로 나눠 '현재 기준값(읽기 전용) →
+        변경 목표(입력)'를 배치한다. 두 행이 동일한 [1.1, 0.3, 1.1] 비율과 동일한 높이(2.5rem) wrapper를
+        쓰기 때문에, padding을 미세조정하지 않아도 화살표·입력창과 같은 가로선에 맞는다."""
+        st.markdown(f"**{label} ({unit})**")
+
+        label_cols = st.columns([1.1, 0.3, 1.1])
+        with label_cols[0]:
+            st.markdown("<div class='target-label'>현재 기준값</div>", unsafe_allow_html=True)
+        with label_cols[2]:
+            st.markdown("<div class='target-label'>변경 목표</div>", unsafe_allow_html=True)
+
+        value_cols = st.columns([1.1, 0.3, 1.1], vertical_alignment="top")
+        with value_cols[0]:
+            st.markdown(
+                f"<div class='current-target-value'>{current_targets[field]:.{decimals}f}</div>",
+                unsafe_allow_html=True,
+            )
+        with value_cols[1]:
+            st.markdown("<div class='target-arrow'>&rarr;</div>", unsafe_allow_html=True)
+        with value_cols[2], st.container(key=f"target_value_input_{field}_{process}"):
+            return st.number_input(
+                "변경 목표", key=f"target_input_{field}_{process}", format=f"%.{decimals}f",
+                label_visibility="collapsed",
+            )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.caption(f"기준 Recipe 참고값: {defaults['target_top_cd']:g}nm")
-        target_top_cd = st.number_input(
-            "목표 Top CD (nm)", value=defaults["target_top_cd"], key=f"ttop_{process}_{recipe}",
-            help="원하는 목표값을 입력하세요.",
-        )
+        target_top_cd = _target_change_row("Top CD", "nm", "target_top_cd")
     with c2:
-        st.caption(f"기준 Recipe 참고값: {defaults['target_mid_cd']:g}nm")
-        target_mid_cd = st.number_input(
-            "목표 Mid CD (nm)", value=defaults["target_mid_cd"], key=f"tmid_{process}_{recipe}",
-            help="원하는 목표값을 입력하세요.",
-        )
+        target_mid_cd = _target_change_row("Mid CD", "nm", "target_mid_cd")
     with c3:
-        st.caption(f"기준 Recipe 참고값: {defaults['target_bottom_cd']:g}nm")
-        target_bottom_cd = st.number_input(
-            "목표 Bottom CD (nm)", value=defaults["target_bottom_cd"], key=f"tbot_{process}_{recipe}",
-            help="원하는 목표값을 입력하세요.",
-        )
+        target_bottom_cd = _target_change_row("Bottom CD", "nm", "target_bottom_cd")
     with c4:
-        st.caption(f"기준 Recipe 참고값: {defaults['target_depth']:g}nm")
-        target_depth = st.number_input(
-            "목표 Depth (nm)", value=defaults["target_depth"], key=f"tdep_{process}_{recipe}",
-            help="원하는 목표값을 입력하세요.",
-        )
+        target_depth = _target_change_row("Depth", "nm", "target_depth")
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
-        max_cd_uniformity = st.number_input("Maximum CD Uniformity (%)", value=defaults["max_cd_uniformity"], step=0.5, key=f"mcdu_{process}")
+        max_cd_uniformity = st.number_input(
+            "Maximum CD Uniformity (%)", value=defaults["max_cd_uniformity"], step=0.5, format="%.1f", key=f"mcdu_{process}",
+        )
     with c6:
-        max_depth_uniformity = st.number_input("Maximum Depth Uniformity (%)", value=defaults["max_depth_uniformity"], step=0.5, key=f"mdu_{process}")
+        max_depth_uniformity = st.number_input(
+            "Maximum Depth Uniformity (%)", value=defaults["max_depth_uniformity"], step=0.5, format="%.1f", key=f"mdu_{process}",
+        )
     with c7:
-        min_pass_rate = st.number_input("Minimum Pass Rate (%)", value=defaults["min_pass_rate"], step=1.0, key=f"mpr_{process}")
+        min_pass_rate = st.number_input(
+            "Minimum Pass Rate (%)", value=defaults["min_pass_rate"], step=1.0, format="%.1f", key=f"mpr_{process}",
+        )
     with c8:
-        max_defect_count = st.number_input("Maximum Defect Count (건)", value=defaults["max_defect_count"], step=1.0, key=f"mdc_{process}")
+        max_defect_count = st.number_input(
+            "Maximum Defect Count (건)", value=int(defaults["max_defect_count"]), step=1, format="%d", key=f"mdc_{process}",
+        )
 
     targets = {
         "target_top_cd": target_top_cd, "target_mid_cd": target_mid_cd,

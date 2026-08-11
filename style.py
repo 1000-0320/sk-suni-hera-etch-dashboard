@@ -748,6 +748,62 @@ def inject_custom_css():
         .summary-card-recipe .label {{ color: {COLORS['text_secondary']}; font-size: 0.78rem; font-weight: 700; }}
         .summary-card-recipe .value {{ color: {COLORS['text_primary']}; font-size: 1.35rem; font-weight: 800; margin-top: 0.25rem; }}
 
+        /* 목표 품질 설정 — 라벨 행/값 행을 별도 columns로 분리해 정렬 (padding 미세조정 대신 동일 높이 wrapper 사용) */
+        .target-label {{
+            height: 1.3rem;
+            display: flex;
+            align-items: center;
+            box-sizing: border-box;
+            margin: 0 0 0.3rem 0;
+            padding: 0 0.75rem;
+            font-size: 0.92rem;
+            font-weight: 700;
+            line-height: 1;
+            color: {COLORS['text_secondary']};
+        }}
+        .current-target-value,
+        .target-arrow {{
+            height: 2.5rem;
+            min-height: 2.5rem;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            margin: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            line-height: 1;
+        }}
+        .target-arrow {{
+            justify-content: center;
+            font-size: 1rem;
+            font-weight: 400;
+            color: {COLORS['muted']};
+        }}
+        .current-target-value {{
+            justify-content: center;
+            padding-left: 0;
+            font-size: 1.05rem;
+            font-weight: 400;
+            font-variant-numeric: tabular-nums;
+            color: {COLORS['text_primary']};
+        }}
+        /* number_input 입력창 내부 좌우 여백 — 모든 number_input 공통 */
+        [data-testid="stNumberInputField"] {{
+            padding-left: 0.75rem !important;
+            padding-right: 0.75rem !important;
+        }}
+        /* 목표 품질 설정의 '변경 목표' number_input 회색 블록 높이를 현재값/화살표와 동일한 2.5rem으로 강제.
+        target_value_input_ 접두 키로 감싼 컨테이너 안에서만 적용해 다른 number_input에는 영향 없음. */
+        div[class*="st-key-target_value_input_"] [data-testid="stNumberInput"] div[data-baseweb="input"] {{
+            height: 2.5rem !important;
+            min-height: 2.5rem !important;
+            box-sizing: border-box !important;
+        }}
+        /* '변경 목표' 입력창 숫자 폰트도 현재 기준값 숫자와 같은 크기로 (다른 number_input에는 영향 없음) */
+        div[class*="st-key-target_value_input_"] [data-testid="stNumberInputField"] {{
+            font-size: 1.05rem !important;
+        }}
+
         /* 종합 품질 점수 히어로 */
         .score-hero {{
             background-color: {COLORS['surface']};
