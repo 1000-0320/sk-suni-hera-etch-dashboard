@@ -1506,9 +1506,10 @@ def show_new_process_preview():
     )
     st.caption("예: SiO2를 먼저 Etch하고 PolySi를 그다음 Etch한다면 → 레이어 1 SiO2, 레이어 2 PolySi")
 
+    OTHER_MATERIAL_OPTION = "기타 (직접 입력)"
     material_options = sorted({
         stage["material"] for stage_defs in PROCESS_STAGE_DEFS.values() for stage in stage_defs
-    })
+    }) + [OTHER_MATERIAL_OPTION]
 
     if "new_process_layer_count" not in st.session_state:
         st.session_state.new_process_layer_count = 2
@@ -1525,13 +1526,28 @@ def show_new_process_preview():
             st.session_state.new_process_layer_count -= 1
             st.rerun()
 
+    st.caption("레이어 1이 가장 먼저 Etch되는(웨이퍼 표면과 가장 가까운) 레이어이며, 아래로 갈수록 나중에 Etch되는 레이어입니다.")
+
     layer_materials = []
-    layer_cols = st.columns(4)
-    for i in range(st.session_state.new_process_layer_count):
-        with layer_cols[i % 4]:
-            layer_materials.append(
-                st.selectbox(f"레이어 {i + 1}", material_options, key=f"new_process_layer_{i}")
+    layer_count = st.session_state.new_process_layer_count
+    for i in range(layer_count):
+        row_label_col, row_input_col = st.columns([1, 5])
+        with row_label_col:
+            st.markdown(f"<div style='padding-top:1.9rem; font-weight:600;'>레이어 {i + 1}</div>", unsafe_allow_html=True)
+        with row_input_col:
+            selected_material = st.selectbox(
+                f"레이어 {i + 1} 물질", material_options,
+                key=f"new_process_layer_{i}", label_visibility="collapsed",
             )
+            if selected_material == OTHER_MATERIAL_OPTION:
+                custom_material = st.text_input(
+                    f"레이어 {i + 1} 물질명 직접 입력", key=f"new_process_layer_{i}_custom",
+                    label_visibility="collapsed", placeholder="예: HfO2",
+                ).strip()
+                selected_material = custom_material or OTHER_MATERIAL_OPTION
+        layer_materials.append(selected_material)
+        if i < layer_count - 1:
+            st.markdown("<div style='text-align:center; color:#999; font-size:1.3rem;'>↓</div>", unsafe_allow_html=True)
 
     result = find_layer_references(layer_materials)
     layer_matches = result["layer_matches"]
