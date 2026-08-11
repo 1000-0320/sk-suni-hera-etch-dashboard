@@ -5,6 +5,7 @@
 
 - 배포 링크(현재 실행 중): https://etch-ai-dashboard-ds4w4tzrt6w87jszbkdqza.streamlit.app/
 - 브랜치: `main` (모든 작업 브랜치가 fast-forward로 동일 커밋에 동기화되어 있음)
+- **이 저장소에 문서가 여러 개라 헷갈리면 → [`DOCS_GUIDE.md`](DOCS_GUIDE.md)(문서 안내)부터 보세요**
 - **전체 과정(배경/데이터/모델학습/품질점수/버그이력 등) 한번에 보려면 → [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)**
 - **발표 준비 자료(8/20 최종발표용)** → 기능 설명서 [`docs/FEATURE_GUIDE.md`](docs/FEATURE_GUIDE.md) ·
   PPT 콘텐츠 [`docs/PPT_CONTENT.md`](docs/PPT_CONTENT.md) · Q&A 대비 [`docs/QNA_PREP.md`](docs/QNA_PREP.md)
