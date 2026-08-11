@@ -25,11 +25,11 @@
 `metal`(4차 공정, Metal Al Etch) — gate/metal은 멘토님이 이후 추가로 준 데이터로 isolation/trench와
 동일 파이프라인 재사용해서 신규 학습.
 
-> **주의**: 아래 4~9, 12번 섹션의 데이터/모델 표는 isolation·trench 기준으로 처음 작성된 내용이라
-> 그 둘만 상세 비교되어 있음. gate·metal도 구조는 동일(항목별 모델 학습·whole-recipe-holdout 검증·
-> 자동 모델 선택)하고 학습된 `.joblib`/`metadata.json`도 똑같이 존재하지만, 이 표들 자체를 gate/metal까지
-> 확장 기록하진 않았음 — 필요하면 `ml_engine/gate_models/metadata.json`, `ml_engine/metal_models/metadata.json`
-> 참고.
+> **참고**: 4개 공정 전부 데이터 분석·모델 학습이 끝나 있고(§4, §5-3 표에 4개 공정 다 나와 있음), gate·metal도
+> isolation·trench와 완전히 같은 방식(whole-recipe-holdout CV 기반 자동 모델 선택)으로 학습됨.
+> 다만 §6~9(품질 점수 공식, Defect 수식)의 서술형 설명·Base/Rev15 기준값 표는 isolation·trench 예시로만
+> 작성돼 있음 — 공식 자체는 4개 공정 공통(`ml_engine/scoring.py` 하나를 공유)이라 문제는 없고, gate/metal의
+> 실제 기준값이 궁금하면 `ml_engine/gate_models/metadata.json`, `ml_engine/metal_models/metadata.json` 참고.
 
 ## 2. 팀 구성
 
@@ -77,31 +77,32 @@
 
 ## 4. 데이터 — 어떤 데이터를 얼마나 분석했나
 
-| 항목 | isolation | trench |
-|---|---|---|
-| 원본 파일 | `isolation recipe full dataset_2.xlsx` | `trench recipe full dataset.xlsx` |
-| Recipe Version 개수 | 16개 (`Base`, `Rev1`~`Rev15`) | 16개 (`Base`, `Rev1`~`Rev15`) |
-| Wafer 개수 | 244장 | 236장 |
-| Site 측정값 개수 | 6,100행 (244×25) | 5,900행 (236×25) |
-| Wafer당 Site 구성 | Center 1 + Mid 4 + Edge 10 + Extreme Edge 10 = 25개 | 동일 |
-| Stage 개수 | 2개 (S1, S2) | 4개 (S1~S4) |
-| Recipe 파라미터 개수 | 12개 | 20개 |
-| Depth 단위 | Å (대시보드에는 ×0.1로 nm 환산해서 표시) | nm |
-| Equipment/Chamber 관측 조합 | `AMAT-CENTRIS`+`CH-C`(47) / `CH-D`(64), `LAM-2300FLEX`+`CH-A`(80) / `CH-B`(53) | `AMAT-CENTRIS`+`CH-C`(63) / `CH-D`(64), `LAM-2300FLEX`+`CH-A`(54) / `CH-B`(55) |
+| 항목 | isolation | trench | gate | metal |
+|---|---|---|---|---|
+| 원본 파일 | `isolation recipe full dataset_2.xlsx` | `trench recipe full dataset.xlsx` | `gate recipe full dataset.xlsx` | `metal recipe full dataset.xlsx` |
+| Recipe Version 개수 | 16개 (`Base`, `Rev1`~`Rev15`) | 16개 (`Base`, `Rev1`~`Rev15`) | 16개 (`Base`, `Rev1`~`Rev15`) | 16개 (`Base`, `Rev1`~`Rev15`) |
+| Wafer 개수 | 244장 | 236장 | 231장 | 236장 |
+| Site 측정값 개수 | 6,100행 (244×25) | 5,900행 (236×25) | 5,775행 (231×25) | 5,900행 (236×25) |
+| Wafer당 Site 구성 | Center 1 + Mid 4 + Edge 10 + Extreme Edge 10 = 25개 | 동일 | 동일 | 동일 |
+| Stage 개수 | 2개 (S1, S2) | 4개 (S1~S4) | 1개(접두사 없음) | 1개(접두사 없음) |
+| Recipe 파라미터 개수 | 12개 | 20개 | 5개 | 5개 |
+| Depth 단위 | Å (대시보드에는 ×0.1로 nm 환산해서 표시) | nm | nm | nm |
+| Equipment/Chamber 관측 조합 | `AMAT-CENTRIS`+`CH-C`(47) / `CH-D`(64), `LAM-2300FLEX`+`CH-A`(80) / `CH-B`(53) | `AMAT-CENTRIS`+`CH-C`(63) / `CH-D`(64), `LAM-2300FLEX`+`CH-A`(54) / `CH-B`(55) | `AMAT-CENTRIS`+`CH-C`(58) / `CH-D`(47), `LAM-2300FLEX`+`CH-A`(61) / `CH-B`(65) | `AMAT-CENTRIS`+`CH-C`(71) / `CH-D`(53), `LAM-2300FLEX`+`CH-A`(58) / `CH-B`(54) |
 
-**공통 제약**: 두 공정 다 관측된 Recipe가 16개뿐이고, `Base`에서 시작해 파라미터를 한두 개씩 순차적으로
+**공통 제약**: 네 공정 다 관측된 Recipe가 16개뿐이고, `Base`에서 시작해 파라미터를 한두 개씩 순차적으로
 바꿔나간 이력이라 파라미터 간 상관관계가 높음 — 그래서 "이 파라미터가 원인"이라고 인과적으로 말할 수
 없고, 모델이 잡아낸 연관성(association)으로만 해석해야 함. (`metadata.json`의 `limitations`에 명시)
 
-원본 데이터는 `data/isolation_dataset.xlsx`, `data/trench_dataset.xlsx`로 이 저장소에 포함되어 있어서
-누구든 업로드 없이 바로 대시보드를 씀. `recipe master.csv`류 원본 파일은 내용이 이미 위 xlsx에 포함돼
-있어서 별도로 올리지 않음.
+원본 데이터는 `data/{isolation,trench,gate,metal}_dataset.xlsx`로 이 저장소에 포함되어 있어서
+누구든 업로드 없이 바로 대시보드를 씀. `recipe master.csv`류 원본 파일은 isolation/trench는 내용이
+이미 위 xlsx에 포함돼 있어서 별도로 안 올렸고, gate/metal은 `ml_engine/training/{gate,metal}/`에
+별도로 포함되어 있음.
 
 ---
 
 ## 5. 모델 학습 — 어떻게 시켰나
 
-### 5-1. 파이프라인 (isolation·trench 공통, 스크립트 4개 순서대로 실행)
+### 5-1. 파이프라인 (isolation·trench·gate·metal 4개 공정 공통, 스크립트 4개 순서대로 실행)
 
 | 스크립트 | 하는 일 |
 |---|---|
@@ -110,8 +111,9 @@
 | `select_deployment_models.py` | 위 결과에서 CD/Depth 회귀·Particle 분류 항목별 최고 성능 모델을 배포용으로 선정, `metadata.json` 갱신 |
 | `train_quality_v2.py` | Spec Pass 여부(4개) + Defect Count/Severity를 추가 학습, Zone별 품질 점수 계산에 쓰는 기준값도 `metadata.json`에 추가 |
 
-(경로: `ml_engine/training/isolation/`, `ml_engine/training/trench/` — trench 쪽은 파라미터 개수만
-다르고 스크립트 로직은 완전히 동일한 복사본)
+(경로: `ml_engine/training/{isolation,trench,gate,metal}/` — 넷 다 파라미터 개수/Stage 구조만
+다르고 스크립트 로직은 완전히 동일한 복사본. gate/metal은 `created_utc: 2026-08-10`에 학습 완료,
+`ml_engine/{gate,metal}_models/metadata.json`에서 확인 가능)
 
 ### 5-2. 모델을 "어떻게" 골랐나 — 핵심은 whole-recipe-holdout
 
@@ -132,16 +134,19 @@
 
 ### 5-3. 항목별 최종 선택 모델
 
-| 예측 항목 | isolation | trench |
-|---|---|---|
-| Top CD | RandomForest | XGBoost |
-| Mid CD | RandomForest | RandomForest |
-| Bottom CD | RandomForest | RandomForest |
-| Depth | XGBoost | RandomForest |
-| Top/Mid/Bottom/Depth Spec Pass (4개) | XGBoost / RandomForest / RandomForest / XGBoost | XGBoost / RandomForest / MLP / MLP |
-| Particle_Defect | XGBoost | MLP |
-| Defect_Count | RandomForest | MLP |
-| Defect_Severity_Score | RandomForest | MLP |
+| 예측 항목 | isolation | trench | gate | metal |
+|---|---|---|---|---|
+| Top CD | RandomForest | XGBoost | RandomForest | RandomForest |
+| Mid CD | RandomForest | RandomForest | RandomForest | RandomForest |
+| Bottom CD | RandomForest | RandomForest | RandomForest | RandomForest |
+| Depth | XGBoost | RandomForest | XGBoost | XGBoost |
+| Top/Mid/Bottom/Depth Spec Pass (4개) | XGBoost / RandomForest / RandomForest / XGBoost | XGBoost / RandomForest / MLP / MLP | RandomForest / XGBoost / MLP / XGBoost | XGBoost / XGBoost / XGBoost / MLP |
+| Particle_Defect | XGBoost | MLP | XGBoost | XGBoost |
+| Defect_Count | RandomForest | MLP | RandomForest | MLP |
+| Defect_Severity_Score | RandomForest | MLP | RandomForest | MLP |
+
+(위 표는 `ml_engine/{process}_models/metadata.json`의 `selected_models`를 그대로 옮긴 것 —
+네 공정 다 whole-recipe-holdout CV 자동 선택 결과이며 gate/metal도 사람이 고른 게 아님)
 
 **MLP 관련 참고**: MLP는 곽영진님의 원본 `etch_simulator` 레포부터 있던 3파전 비교 후보 중 하나임
 (trench에서 새로 추가한 게 아니라 그대로 복사해온 방식). isolation에서는 11개 항목 전부 RandomForest
@@ -149,7 +154,9 @@
 남기고 시뮬레이터엔 안 씀"이라고 적혀 있음. 반면 trench는 파라미터가 더 많고(20개, 12개 대비) 데이터
 특성이 달라서, 같은 자동 선택 로직을 돌린 결과 5개 항목(Particle_Defect, Defect_Count,
 Defect_Severity_Score, Bottom_CD_Spec_Pass, Depth_Spec_Pass)에서 실제로 MLP가 이겨서 배포에 쓰이고
-있음 — 사람이 고른 게 아니라 trench 데이터에서 나온 순수 결과.
+있음 — 사람이 고른 게 아니라 trench 데이터에서 나온 순수 결과. gate·metal도 항목별로 MLP가 1~2개씩
+섞여 나왔는데(gate: Bottom_CD_Spec_Pass, metal: Defect_Count/Severity/Depth_Spec_Pass) 같은
+자동 선택 로직 결과.
 
 ### 5-4. 모델 입력(Feature)
 
@@ -292,9 +299,9 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 | `app.py` | 화면(UI) 전체 |
 | `model.py` | 화면 입력 → AI 모델 호출 → 점수/추천 계산 |
 | `ml_engine/scoring.py` | 대시보드 목표 대비 종합 점수 공식(공정 공통) |
-| `ml_engine/isolation_core.py`, `trench_core.py` | 공정별 예측 코어(학습된 모델 로드·실행, 품질 지수 v3, Defect 정규화) |
-| `ml_engine/isolation_models/`, `trench_models/` | 학습 완료 모델(`.joblib`) + `metadata.json` |
-| `ml_engine/training/isolation/`, `training/trench/` | 모델 학습 원본 스크립트(재현 가능) |
+| `ml_engine/{isolation,trench,gate,metal}_core.py` | 공정별 예측 코어(학습된 모델 로드·실행, 품질 지수 v3, Defect 정규화) — 4개 다 존재 |
+| `ml_engine/{isolation,trench,gate,metal}_models/` | 학습 완료 모델(`.joblib`) + `metadata.json` — 4개 다 존재 |
+| `ml_engine/training/{isolation,trench,gate,metal}/` | 모델 학습 원본 스크립트(재현 가능) — 4개 다 존재 |
 | `ml_engine/training/trench/ANALYSIS_SUMMARY.md` | trench 전용 상세 분석(이 문서의 5~7번 섹션을 더 깊게) |
 | `data/*.xlsx` | 배포용 기본 데이터 |
 | `README.md` | 팀원용 빠른 소개 + 로컬 실행법 |
