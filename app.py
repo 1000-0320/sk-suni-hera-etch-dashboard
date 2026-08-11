@@ -53,7 +53,7 @@ from charts import (
     build_pass_rate_trend_chart, build_particle_chart,
     build_rev_cd_trend_chart, build_rev_depth_trend_chart,
     build_rev_uniformity_trend_chart, build_rev_pass_rate_chart, build_rev_defect_chart,
-    build_recipe_score_chart, build_rev_comparison_chart,
+    build_recipe_score_chart, build_rev_comparison_chart, build_wafer_profile_chart,
     build_zone_cd_chart, build_zone_depth_chart, build_zone_spread_chart,
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
@@ -63,6 +63,10 @@ from login_page import render_login_page, render_sidebar_logout
 st.set_page_config(page_title="Etch AI Decision Support System", page_icon="🧪", layout="wide")
 inject_custom_css()
 
+# Wafer 단면 Profile에서 한 번에 보여줄 지표들 (표시용 라벨 -> Site_Level_Raw 실제 컬럼명)
+WAFER_MAP_METRICS = {
+    "Top CD": "Top_CD_nm", "Mid CD": "Mid_CD_nm", "Bottom CD": "Bottom_CD_nm", "Depth": "Depth_nm",
+}
 TARGET_MODE_LABEL = "목표품질 달성을 위한 레시피 변경점 추천"
 DIRECT_MODE_LABEL = "레시피 조건을 직접 입력하여 품질 평가"
 
@@ -1459,6 +1463,23 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame, targets: dict):
 
 
 # ==============================================================================
+# 4. Wafer 단면 Profile
+# ==============================================================================
+def show_wafer_profile(filtered_site: pd.DataFrame):
+    render_dashboard_section_title("Wafer 단면 Profile", "map")
+    if filtered_site.empty:
+        st.info("선택한 조건에 해당하는 Site 데이터가 없습니다.")
+        return
+    st.caption("x축 = Point 번호. Edge → Center → Edge 순서라 Zone 평균보다 정확한 수치 비교가 쉽습니다.")
+    profile_items = list(WAFER_MAP_METRICS.items())
+    for row_start in range(0, len(profile_items), 2):
+        profile_cols = st.columns(2, gap="large")
+        for col, (label, metric_col) in zip(profile_cols, profile_items[row_start:row_start + 2]):
+            with col:
+                st.plotly_chart(build_wafer_profile_chart(filtered_site, metric_col, label), use_container_width=True)
+
+
+# ==============================================================================
 # 5. Zone 분석
 # ==============================================================================
 def show_zone_analysis(filtered_site: pd.DataFrame):
@@ -2328,6 +2349,9 @@ def main():
 
         with st.expander("Wafer 단위 품질 결과", expanded=False):
             show_quality_visualization(filtered_wafer, dashboard_targets)
+
+        with st.expander("Wafer 단면 Profile", expanded=False):
+            show_wafer_profile(filtered_site)
 
         with st.expander("Zone별 분석", expanded=False):
             show_zone_analysis(filtered_site)
