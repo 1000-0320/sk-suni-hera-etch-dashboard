@@ -74,6 +74,8 @@ DIRECT_MODE_LABEL = "레시피 조건을 직접 입력하여 품질 평가"
 PROCESS_SCHEMATIC_IMAGES = {
     "isolation": "assets/process/isolation_schematic.png",
     "trench": "assets/process/trench_schematic.png",
+    "gate": "assets/process/gate_schematic.png",
+    "metal": "assets/process/metal_schematic.png",
 }
 
 
@@ -208,7 +210,7 @@ def create_process_selector():
         unsafe_allow_html=True,
     )
 
-    selector_col, _ = st.columns([1.55, 3.45], gap="large")
+    selector_col, _ = st.columns([2.8, 2.2], gap="medium")
     with selector_col:
         st.markdown('<div class="process-selector-anchor">ACTIVE PROCESS</div>', unsafe_allow_html=True)
         selected = st.radio(
@@ -351,8 +353,13 @@ def summarize_recipe_changes(
             (f"{input_prefix}_rf_bias", "RF Bias", "W"),
             (f"{input_prefix}_pressure", "Pressure", "mT"),
         ]
+        def _gas_short_name(gas_col: str, stage_key: str = stage_key) -> str:
+            prefix = f"{stage_key}_"
+            name = gas_col[len(prefix):] if gas_col.startswith(prefix) else gas_col
+            return name[: -len("_sccm")] if name.endswith("_sccm") else name
+
         parameters.extend(
-            (gas_col.lower(), f"{gas_col.split('_')[1]} Flow", "sccm")
+            (gas_col.lower(), f"{_gas_short_name(gas_col)} Flow", "sccm")
             for gas_col in stage["gas_cols"]
         )
 
@@ -634,7 +641,9 @@ def create_input_panel():
 
         gas_cols_ui = st.columns(len(stage["gas_cols"]))
         for gas_col_widget, gas_col_name in zip(gas_cols_ui, stage["gas_cols"]):
-            gas_label = gas_col_name.split("_")[1]
+            gas_prefix = f"{stage['key']}_"
+            gas_label = gas_col_name[len(gas_prefix):] if gas_col_name.startswith(gas_prefix) else gas_col_name
+            gas_label = gas_label[: -len("_sccm")] if gas_label.endswith("_sccm") else gas_label
             default_val = float(recipe_row[gas_col_name]) if recipe_row is not None and gas_col_name in recipe_row.index else 0.0
             input_key = gas_col_name.lower()
             with gas_col_widget:
@@ -1922,6 +1931,11 @@ def show_parameter_history_results(recipe_df: pd.DataFrame, wafer_df: pd.DataFra
 # 메인 실행부
 # ==============================================================================
 def main():
+    # 페이지 새로고침(F5)은 세션을 새로 시작시키지만, 로그인 직후 URL에 남겨둔
+    # 플래그가 있으면 다시 로그인 화면을 보여주지 않고 바로 복원한다.
+    if not st.session_state.authenticated and st.query_params.get("auth") == "1":
+        st.session_state.authenticated = True
+
     if not st.session_state.authenticated:
         render_login_page()
         return

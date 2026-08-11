@@ -452,6 +452,7 @@ def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recip
     """현재 입력 조건 대비 추천 Recipe의 Stage별 파라미터 변경점만 표로 정리"""
     from data_utils import STAGE_DEFS as _DEFAULT_STAGE_DEFS
     stage_defs = stage_defs or _DEFAULT_STAGE_DEFS
+    field_labels = {"time": "Time", "rf_bias": "RF Bias", "pressure": "Pressure"}
     rows = []
     for stage in stage_defs:
         key = stage["key"].lower()
@@ -463,7 +464,7 @@ def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recip
             if abs(cur - rec) < 1e-6:
                 continue
             rows.append({
-                "Parameter": f"{stage['key']} {field.replace('_', ' ').title()}",
+                "Parameter": f"{stage['key']} {field_labels[field]}",
                 "현재값": f"{cur:g}{unit}",
                 "추천값": f"{rec:g}{unit}",
                 "변경": f"{'+' if rec - cur > 0 else ''}{rec - cur:g}{unit}",

@@ -390,6 +390,7 @@ def render_login_page() -> None:
                 st.session_state.authenticated = True
                 st.session_state.authenticated_user = user_id.strip()
                 st.session_state.authenticated_department = department
+                st.query_params["auth"] = "1"
                 st.rerun()
             else:
                 st.error(error_message)
@@ -429,4 +430,5 @@ def render_sidebar_logout() -> None:
         st.session_state.authenticated = False
         st.session_state.authenticated_user = None
         st.session_state.authenticated_department = None
+        st.query_params.pop("auth", None)
         st.rerun()

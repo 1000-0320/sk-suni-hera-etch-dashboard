@@ -173,13 +173,19 @@ def inject_custom_css():
             margin-bottom: 0.35rem;
         }}
         div[data-testid="stColumn"]:has(.process-selector-anchor) div[role="radiogroup"] {{
-            gap: 0.35rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(min-content, 1fr));
+            gap: 0.3rem;
         }}
         div[data-testid="stColumn"]:has(.process-selector-anchor) div[role="radiogroup"] label {{
             background: {COLORS['control_bg']};
             border-radius: 10px;
-            padding: 0.42rem 0.62rem;
+            padding: 0.42rem 0.45rem;
             margin: 0;
+            white-space: nowrap;
+        }}
+        div[data-testid="stColumn"]:has(.process-selector-anchor) div[role="radiogroup"] label [data-testid="stMarkdownContainer"] p {{
+            white-space: nowrap;
         }}
         div[data-testid="stColumn"]:has(.process-selector-anchor) div[role="radiogroup"] label:has(input:checked) {{
             background: {COLORS['accent_soft']};
@@ -473,7 +479,7 @@ def inject_custom_css():
 
         /* 기본 Streamlit 탭을 제품형 세그먼트 내비게이션으로 정리 */
         div[data-testid="stTabs"] [role="tablist"] {{
-            gap: 0.35rem;
+            gap: 0.15rem;
             background: {COLORS['surface']};
             border: 1px solid {COLORS['gridline']};
             border-radius: 16px;
@@ -483,11 +489,13 @@ def inject_custom_css():
         div[data-testid="stTabs"] [role="tab"] {{
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
             border-radius: 11px;
             min-height: 2.8rem;
-            padding: 0 1.05rem;
+            padding: 0 0.65rem;
             font-weight: 750;
+            font-size: 0.92rem;
+            white-space: nowrap;
         }}
         div[data-testid="stTabs"] [role="tab"]::before,
         button[data-baseweb="tab"]::before {{
