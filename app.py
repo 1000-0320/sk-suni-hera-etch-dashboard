@@ -1501,22 +1501,38 @@ def show_new_process_preview():
     입력한 레이어(물질) 순서를 기존 4개 공정의 Stage들과 대조해 참고값을 보여준다."""
     st.markdown("<div class='section-title'>신규 공정 품질 프리뷰</div>", unsafe_allow_html=True)
     st.caption(
-        "아직 AI 모델이 없는 새 공정을, **Etch 하려는 레이어(물질)를 순서대로** 입력해서 미리 감을 잡는 "
-        "기능입니다. 한 줄에 레이어 하나씩 입력하세요 — 예: 하드마스크로 SiO2를 먼저 Etch하고, "
-        "그다음 PolySi를 Etch하는 공정이면 첫 줄 SiO2, 둘째 줄 PolySi. "
+        "아직 AI 모델이 없는 새 공정을, **Etch 하려는 레이어(물질)를 순서대로** 선택해서 미리 감을 잡는 "
+        "기능입니다. 위에서부터 Etch 순서대로 레이어를 채워주세요 — 예: 하드마스크로 SiO2를 먼저 Etch하고, "
+        "그다음 PolySi를 Etch하는 공정이면 레이어 1은 SiO2, 레이어 2는 PolySi. "
         "**AI 예측이 아니며 점수화도 하지 않습니다.**"
     )
-    st.info("사용 가능한 물질: SiO2, SiON, SOC, Si, PolySi, Al")
 
-    layer_text = st.text_area(
-        "신규 공정의 레이어를 위에서부터 순서대로, 한 줄에 하나씩 입력하세요",
-        placeholder="SiO2\nPolySi",
-        height=100,
-        key="new_process_layer_text",
-    )
-    if not layer_text.strip():
-        return
-    layer_materials = [line for line in layer_text.splitlines() if line.strip()]
+    material_options = sorted({
+        stage["material"] for stage_defs in PROCESS_STAGE_DEFS.values() for stage in stage_defs
+    })
+
+    if "new_process_layer_count" not in st.session_state:
+        st.session_state.new_process_layer_count = 2
+
+    label_col, add_col, remove_col = st.columns([4, 1, 1])
+    with label_col:
+        st.caption(f"레이어 {st.session_state.new_process_layer_count}개")
+    with add_col:
+        if st.button("+ 레이어", disabled=st.session_state.new_process_layer_count >= 8, use_container_width=True):
+            st.session_state.new_process_layer_count += 1
+            st.rerun()
+    with remove_col:
+        if st.button("− 레이어", disabled=st.session_state.new_process_layer_count <= 1, use_container_width=True):
+            st.session_state.new_process_layer_count -= 1
+            st.rerun()
+
+    layer_materials = []
+    layer_cols = st.columns(4)
+    for i in range(st.session_state.new_process_layer_count):
+        with layer_cols[i % 4]:
+            layer_materials.append(
+                st.selectbox(f"레이어 {i + 1}", material_options, key=f"new_process_layer_{i}")
+            )
 
     result = find_layer_references(layer_materials)
     layer_matches = result["layer_matches"]
