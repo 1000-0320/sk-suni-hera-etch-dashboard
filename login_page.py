@@ -17,12 +17,12 @@ from app_config import get_auth_mode, get_auth_mode_label, verify_login
 from style import ACTIVE_THEME
 
 
-# 이 파일만 같은 이름으로 교체하면 로그인 왼쪽 이미지가 변경된다.
-LOGIN_HERO_PATH = (
+# 이 파일만 같은 이름으로 교체하면 HERA 마스코트가 사용되는 모든 위치가 변경된다.
+HERA_MASCOT_PATH = (
     Path(__file__).resolve().parent
     / "assets"
-    / "login"
-    / "semiconductor-etch-hero.png"
+    / "brand"
+    / "hera-mascot.png"
 )
 DEPARTMENT_OPTIONS = ("관리자",)
 LOGIN_THEMES = {
@@ -104,19 +104,13 @@ def _image_data_uri(image_path: Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def _inject_login_css() -> None:
-    image_uri = _image_data_uri(LOGIN_HERO_PATH)
-    background_image = (
-        f"linear-gradient(180deg, {LOGIN_COLORS['hero_overlay_top']} 0%, "
-        f"{LOGIN_COLORS['hero_overlay_bottom']} 100%), "
-        f"url('{image_uri}')"
-        if image_uri
-        else (
-            f"linear-gradient(145deg, {LOGIN_COLORS['hero_fallback_start']} 0%, "
-            f"{LOGIN_COLORS['hero_fallback_mid']} 52%, {LOGIN_COLORS['hero_fallback_end']} 100%)"
-        )
-    )
+@st.cache_data(show_spinner=False)
+def get_hera_mascot_uri() -> str:
+    """로그인과 앱 헤더가 공유하는 HERA 마스코트 data URI를 반환한다."""
+    return _image_data_uri(HERA_MASCOT_PATH)
 
+
+def _inject_login_css() -> None:
     st.markdown(
         f"""
         <style>
@@ -157,17 +151,43 @@ def _inject_login_css() -> None:
         }}
 
         .login-hero {{
+            position: relative;
+            isolation: isolate;
+            overflow: hidden;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
             padding: clamp(2rem, 4vw, 4.2rem);
             color: {LOGIN_COLORS['hero_text']};
-            background-image: {background_image};
-            background-position: center;
-            background-repeat: no-repeat;
-            background-size: cover;
+            background:
+                radial-gradient(circle at 79% 25%, rgba(255, 246, 232, 0.25) 0 11%, transparent 11.5%),
+                radial-gradient(circle at 79% 25%, transparent 0 19%, rgba(255, 219, 192, 0.18) 19.3% 19.8%, transparent 20.1%),
+                linear-gradient(145deg, #4b1715 0%, #982d28 48%, #ef7143 100%);
             box-sizing: border-box;
+        }}
+        .login-hero::before {{
+            content: "";
+            position: absolute;
+            z-index: -2;
+            inset: 0;
+            opacity: 0.24;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.18) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.18) 1px, transparent 1px);
+            background-size: 52px 52px;
+            mask-image: linear-gradient(125deg, transparent 8%, black 54%, transparent 96%);
+        }}
+        .login-hero::after {{
+            content: "";
+            position: absolute;
+            z-index: -1;
+            right: -12%;
+            bottom: -25%;
+            width: 82%;
+            aspect-ratio: 1;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255,248,235,0.32) 0%, rgba(255,218,190,0.12) 45%, transparent 70%);
         }}
         .login-hero__eyebrow {{
             display: flex;
@@ -184,12 +204,24 @@ def _inject_login_css() -> None:
             height: 2px;
             background: {LOGIN_COLORS['hero_accent']};
         }}
-        .login-hero__copy {{ max-width: 31rem; }}
+        .login-hero__stage {{
+            position: relative;
+            flex: 1 1 auto;
+            min-height: 0;
+        }}
+        .login-hero__copy {{
+            position: relative;
+            z-index: 3;
+            max-width: 29rem;
+            margin-top: clamp(2.2rem, 9vh, 7rem);
+        }}
         .login-hero__mark {{
-            width: 3.25rem;
+            width: auto;
+            min-width: 4.4rem;
             height: 3.25rem;
-            display: grid;
+            display: inline-grid;
             place-items: center;
+            padding: 0 0.9rem;
             margin-bottom: 1.1rem;
             border: 1px solid rgba(255, 255, 255, 0.55);
             border-radius: 14px;
@@ -201,9 +233,21 @@ def _inject_login_css() -> None:
         .login-hero h2 {{
             margin: 0;
             color: {LOGIN_COLORS['hero_text']};
-            font-size: clamp(2.2rem, 4vw, 4.3rem);
-            line-height: 1;
-            letter-spacing: -0.05em;
+            font-size: clamp(3.25rem, 5.2vw, 5.1rem);
+            font-weight: 900;
+            line-height: 0.95;
+            letter-spacing: -0.045em;
+            text-wrap: balance;
+            text-shadow: 0 5px 24px rgba(53, 12, 9, 0.22);
+        }}
+        .login-hero__subtitle {{
+            max-width: 24rem;
+            margin-top: 1.05rem;
+            color: rgba(255, 255, 255, 0.86);
+            font-size: clamp(1.05rem, 1.55vw, 1.4rem);
+            font-weight: 720;
+            line-height: 1.35;
+            letter-spacing: 0.005em;
         }}
         .login-hero p {{
             max-width: 27rem;
@@ -212,7 +256,20 @@ def _inject_login_css() -> None:
             font-size: 0.95rem;
             line-height: 1.7;
         }}
+        .login-hero__mascot {{
+            position: absolute;
+            z-index: 2;
+            right: clamp(-6.2rem, -7vw, -3rem);
+            bottom: clamp(-3.4rem, -4vh, -1.8rem);
+            width: min(96%, 40rem);
+            max-height: 76vh;
+            object-fit: contain;
+            object-position: right bottom;
+            filter: drop-shadow(0 24px 30px rgba(55, 9, 7, 0.32));
+        }}
         .login-hero__footer {{
+            position: relative;
+            z-index: 4;
             display: flex;
             align-items: center;
             gap: 0.55rem;
@@ -319,12 +376,29 @@ def _inject_login_css() -> None:
                 flex: 1 1 auto !important;
             }}
             .login-hero {{
-                min-height: 18rem;
+                min-height: 20rem;
                 padding: 2rem;
+            }}
+            .login-hero__copy {{
+                max-width: 72%;
+                margin-top: 2.1rem;
+            }}
+            .login-hero h2 {{ font-size: clamp(2.8rem, 12vw, 3.6rem); }}
+            .login-hero__subtitle {{
+                max-width: 72%;
+                margin-top: 0.65rem;
+                font-size: 0.98rem;
+            }}
+            .login-hero__mark {{ height: 2.65rem; min-width: 3.9rem; margin-bottom: 0.75rem; }}
+            .login-hero__mascot {{
+                right: -2.8rem;
+                bottom: -2.2rem;
+                width: min(57%, 18rem);
+                max-height: 16rem;
             }}
             .login-hero__copy p {{ display: none; }}
             div[data-testid="stColumn"]:has(.login-form-anchor) {{
-                min-height: calc(100vh - 18rem);
+                min-height: calc(100vh - 20rem);
                 padding: 2.25rem 1.5rem 3rem;
             }}
         }}
@@ -339,19 +413,27 @@ def render_login_page() -> None:
     _inject_login_css()
     auth_mode = get_auth_mode()
     auth_mode_label = get_auth_mode_label()
+    mascot_uri = get_hera_mascot_uri()
+    mascot_html = (
+        f'<img class="login-hero__mascot" src="{mascot_uri}" alt="HERA mascot">'
+        if mascot_uri
+        else ""
+    )
     st.markdown('<span class="login-page-marker"></span>', unsafe_allow_html=True)
 
     hero_column, form_column = st.columns([0.92, 1.28], gap=None)
 
     with hero_column:
         st.markdown(
-            """
+            f"""
             <section class="login-hero">
                 <div class="login-hero__eyebrow"><span></span> PROCESS INTELLIGENCE</div>
-                <div class="login-hero__copy">
-                    <div class="login-hero__mark">EA</div>
-                    <h2>Etch AI</h2>
-                    <p>공정 데이터를 더 빠르게 해석하고, 예측과 시뮬레이션을 하나의 흐름에서 실행하세요.</p>
+                <div class="login-hero__stage">
+                    <div class="login-hero__copy">
+                        <h2>HERA</h2>
+                        <div class="login-hero__subtitle">Hynix Etch Recipe Advisor</div>
+                    </div>
+                    {mascot_html}
                 </div>
                 <div class="login-hero__footer">
                     <span class="login-hero__status"></span>

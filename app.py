@@ -58,7 +58,7 @@ from charts import (
     build_zone_pass_rate_chart, build_zone_defect_chart,
     build_cd_comparison_chart, build_score_comparison_chart,
 )
-from login_page import render_login_page, render_sidebar_logout
+from login_page import get_hera_mascot_uri, render_login_page, render_sidebar_logout
 
 st.set_page_config(page_title="Etch AI Decision Support System", page_icon="🧪", layout="wide")
 inject_custom_css()
@@ -198,17 +198,39 @@ def render_dashboard_section_title(title: str, icon: str, tone: str = "coral") -
 def create_process_selector():
     options = list(PROCESS_STAGE_DEFS.keys())
     short_labels = {"isolation": "Isolation", "trench": "Trench", "gate": "Gate", "metal": "Metal"}
-
-    st.markdown(
-        """
-        <div class="app-shell-header">
-            <div class="app-shell-eyebrow">ETCH PROCESS INTELLIGENCE</div>
-            <h1 class="app-shell-title">Decision Support Center</h1>
-            <div class="app-shell-subtitle">반도체 Etch 공정 예측, 품질 평가와 의사결정을 하나의 흐름에서 관리합니다.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    mascot_uri = get_hera_mascot_uri()
+    mascot_visual = (
+        f'<img src="{mascot_uri}" alt="HERA mascot">'
+        if mascot_uri
+        else '<div class="hera-header-fallback">HERA</div>'
     )
+
+    header_copy_col, header_mascot_col = st.columns([1.5, 0.5], gap="large")
+    with header_copy_col:
+        st.markdown(
+            """
+            <div class="app-shell-header">
+                <div class="app-shell-eyebrow">ETCH PROCESS INTELLIGENCE</div>
+                <h1 class="app-shell-title">Decision Support Center</h1>
+                <div class="app-shell-subtitle">반도체 Etch 공정 예측, 품질 평가와 의사결정을 하나의 흐름에서 관리합니다.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with header_mascot_col:
+        st.markdown(
+            f"""
+            <aside class="hera-header-card" aria-label="HERA brand mascot">
+                <div class="hera-header-copy">
+                    <span>ETCH RECIPE ADVISOR</span>
+                    <strong>HERA</strong>
+                    <small>Process intelligence guide</small>
+                </div>
+                {mascot_visual}
+            </aside>
+            """,
+            unsafe_allow_html=True,
+        )
 
     selector_col, equipment_col = st.columns([1, 1], gap="large")
     with selector_col:

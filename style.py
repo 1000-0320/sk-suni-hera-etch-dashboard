@@ -156,6 +156,84 @@ def inject_custom_css():
             margin-top: 0.75rem;
             font-size: 0.95rem;
         }}
+        div[data-testid="stColumn"]:has(.hera-header-card) {{
+            align-self: stretch;
+        }}
+        .hera-header-card {{
+            position: relative;
+            isolation: isolate;
+            overflow: hidden;
+            min-height: 150px;
+            height: calc(100% - 0.9rem);
+            margin-bottom: 0.9rem;
+            border: 1px solid #F0D6CA;
+            border-radius: 22px;
+            background:
+                radial-gradient(circle at 78% 48%, rgba(255,255,255,0.92) 0 17%, transparent 17.5%),
+                radial-gradient(circle at 78% 48%, transparent 0 29%, rgba(229,72,59,0.12) 29.4% 30%, transparent 30.4%),
+                linear-gradient(135deg, #FFF7F1 0%, #FFE7D9 56%, #FFD1BE 100%);
+            box-shadow: 0 12px 30px rgba(117, 57, 42, 0.10);
+        }}
+        .hera-header-card::before {{
+            content: "";
+            position: absolute;
+            z-index: -1;
+            inset: 0;
+            opacity: 0.48;
+            background-image:
+                linear-gradient(rgba(229,72,59,0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(229,72,59,0.08) 1px, transparent 1px);
+            background-size: 24px 24px;
+            mask-image: linear-gradient(110deg, black, transparent 76%);
+        }}
+        .hera-header-copy {{
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            max-width: 56%;
+            padding: 1.15rem 0 1rem 1.15rem;
+        }}
+        .hera-header-copy span {{
+            color: {COLORS['accent']};
+            font-size: 0.55rem;
+            font-weight: 850;
+            letter-spacing: 0.11em;
+            line-height: 1.35;
+        }}
+        .hera-header-copy strong {{
+            margin-top: 0.25rem;
+            color: {COLORS['text_primary']};
+            font-size: 1.35rem;
+            line-height: 1;
+            letter-spacing: -0.04em;
+        }}
+        .hera-header-copy small {{
+            margin-top: 0.45rem;
+            color: {COLORS['text_secondary']};
+            font-size: 0.64rem;
+            line-height: 1.3;
+        }}
+        .hera-header-card img {{
+            position: absolute;
+            z-index: 1;
+            right: -1rem;
+            bottom: -2.15rem;
+            width: min(165%, 19rem);
+            max-height: 230px;
+            object-fit: contain;
+            object-position: right bottom;
+            filter: drop-shadow(0 12px 15px rgba(113, 35, 28, 0.18));
+        }}
+        .hera-header-fallback {{
+            position: absolute;
+            right: 1rem;
+            bottom: 1rem;
+            color: {COLORS['accent']};
+            font-size: 1.15rem;
+            font-weight: 900;
+        }}
 
         div[data-testid="stColumn"]:has(.process-selector-anchor) {{
             align-self: center;
@@ -1069,6 +1147,13 @@ def inject_custom_css():
         @media (max-width: 900px) {{
             .block-container {{ padding-top: 3.1rem; }}
             div[data-testid="stColumn"]:has(.process-selector-anchor) {{ width: 100% !important; }}
+            .hera-header-card {{ min-height: 132px; height: auto; }}
+            .hera-header-card img {{ width: min(40%, 12rem); }}
+        }}
+        @media (max-width: 560px) {{
+            .hera-header-card {{ min-height: 120px; }}
+            .hera-header-copy {{ max-width: 62%; padding: 1rem 0 0.9rem 1rem; }}
+            .hera-header-card img {{ right: -0.7rem; bottom: -1.7rem; width: min(48%, 10.5rem); }}
         }}
         </style>
         """,
