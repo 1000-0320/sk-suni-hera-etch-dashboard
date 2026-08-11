@@ -285,7 +285,7 @@ def get_zone_summary(site_df: pd.DataFrame) -> pd.DataFrame:
     if site_df.empty:
         return pd.DataFrame(columns=[
             "Zone", "Top CD", "Mid CD", "Bottom CD", "Depth",
-            "Pass Rate", "Defect Rate", "CD Spread", "Depth Spread",
+            "Pass Rate", "Defect Rate", "Defect Count", "CD Spread", "Depth Spread",
         ])
 
     zone_order = [z for z in ZONE_ORDER if z in site_df["Zone"].unique()]
@@ -306,6 +306,8 @@ def get_zone_summary(site_df: pd.DataFrame) -> pd.DataFrame:
         "Depth": grouped["Depth_nm"].mean(),
         "Pass Rate": grouped.apply(_pass_rate),
         "Defect Rate": grouped["Defect_Count"].apply(lambda s: (s > 0).mean() * 100),
+        # Site별 Defect_Count(예상 Particle 개수)를 합산한 Zone 내 총 Particle 건수. Defect가 발생한 Site 수가 아님.
+        "Defect Count": grouped["Defect_Count"].apply(lambda s: int(s.sum())),
         "CD Spread": cd_spread,
         "Depth Spread": depth_spread,
     }).reindex(zone_order).reset_index()

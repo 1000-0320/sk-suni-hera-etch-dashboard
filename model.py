@@ -259,11 +259,13 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
     total_wafers = len(filtered_wafer_df)
     defect_wafers = int((filtered_wafer_df["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).sum())
     if defect_wafers > 0:
+        defect_wafer_pct = defect_wafers / total_wafers * 100
         summary_messages.append(
-            f"전체 {total_wafers}장 중 {defect_wafers}장의 Wafer에서 Defect(Particle) {PARTICLE_DEFECT_THRESHOLD}건 초과가 발생했습니다."
+            f"전체 Wafer {total_wafers}장 중 {defect_wafers}장({defect_wafer_pct:.1f}%)에서 "
+            f"Defect가 허용 기준 {PARTICLE_DEFECT_THRESHOLD}건을 초과했습니다."
         )
     else:
-        summary_messages.append(f"선택한 조건에서 Defect(Particle) {PARTICLE_DEFECT_THRESHOLD}건 초과 Wafer는 없었습니다.")
+        summary_messages.append(f"선택한 조건에서 Defect가 허용 기준 {PARTICLE_DEFECT_THRESHOLD}건을 초과한 Wafer는 없었습니다.")
 
     avg_pass_rate = filtered_wafer_df["Overall_Spec_Pass_Rate_pct"].mean()
     if avg_pass_rate >= 95:
@@ -293,7 +295,11 @@ def generate_dashboard_analysis(filtered_wafer_df, zone_summary) -> list:
             worst_defect_zone = zones["Defect Rate"].idxmax()
             worst_defect_value = zones.loc[worst_defect_zone, "Defect Rate"]
             if worst_defect_value > 0:
-                detail_messages.append(f"{worst_defect_zone} Zone에서 Defect 발생 비율({worst_defect_value:.1f}%)이 가장 높습니다.")
+                worst_defect_count = int(zones.loc[worst_defect_zone, "Defect Count"])
+                detail_messages.append(
+                    f"{worst_defect_zone} Zone의 Defect 발생 비율이 {worst_defect_value:.1f}%로 가장 높으며, "
+                    f"총 {worst_defect_count}건의 Defect가 집계되었습니다."
+                )
 
     return summary_messages + detail_messages
 

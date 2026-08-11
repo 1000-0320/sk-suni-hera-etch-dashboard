@@ -710,6 +710,29 @@ def inject_custom_css():
         .summary-card .label {{ color: {COLORS['text_secondary']}; font-size: 0.78rem; font-weight: 700; }}
         .summary-card .value {{ color: {COLORS['text_primary']}; font-size: 1.35rem; font-weight: 800; margin-top: 0.25rem; }}
 
+        /* Best Case 카드 — 연한 연두색, 다른 카드보다 작게 */
+        .summary-card-best {{
+            background-color: #F1FAF0;
+            border: 1px solid #CBEAC4;
+            border-radius: 14px;
+            padding: 0.8rem 0.6rem;
+            text-align: center;
+        }}
+        .summary-card-best .label {{ color: {COLORS['text_secondary']}; font-size: 0.72rem; font-weight: 700; }}
+        .summary-card-best .value {{ color: {COLORS['text_primary']}; font-size: 1.1rem; font-weight: 800; margin-top: 0.2rem; }}
+
+        /* 선택 Recipe Summary 카드 — 연한 분홍색 (Best Case와 구분되도록) */
+        .summary-card-recipe {{
+            background-color: #FDF1F5;
+            border: 1px solid #F3CFDE;
+            border-radius: 18px;
+            padding: 0.95rem;
+            margin-bottom: 0.7rem;
+            text-align: center;
+        }}
+        .summary-card-recipe .label {{ color: {COLORS['text_secondary']}; font-size: 0.78rem; font-weight: 700; }}
+        .summary-card-recipe .value {{ color: {COLORS['text_primary']}; font-size: 1.35rem; font-weight: 800; margin-top: 0.25rem; }}
+
         /* 종합 품질 점수 히어로 */
         .score-hero {{
             background-color: {COLORS['surface']};
@@ -996,11 +1019,12 @@ def render_metric_card(label: str, value, unit: str = ""):
     )
 
 
-def render_summary_card(label: str, value):
-    """Process Summary / 오차 카드"""
+def render_summary_card(label: str, value, variant: str = "summary-card"):
+    """Process Summary / 오차 카드. variant로 summary-card-best(Best Case)·summary-card-recipe(선택 Recipe Summary) 등
+    색상이 다른 카드 스타일을 선택할 수 있다."""
     st.markdown(
         f"""
-        <div class="summary-card">
+        <div class="{variant}">
             <div class="label">{label}</div>
             <div class="value">{value}</div>
         </div>
