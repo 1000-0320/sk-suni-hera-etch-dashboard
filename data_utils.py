@@ -42,25 +42,41 @@ _DUMMY_CHAMBERS = ["CH-A", "CH-B"]
 # 공정별 Stage 정의
 # ----------------------------------------------------------------------------
 TRENCH_STAGE_DEFS = [
-    {"key": "S1", "label": "S1 (SiON Strip)", "time_col": "S1_Time_s",
+    {"key": "S1", "label": "S1 (SiON Strip)", "material": "SiON", "time_col": "S1_Time_s",
      "gas_cols": ["S1_CF4_sccm", "S1_CHF3_sccm"], "bias_col": "S1_RF_Bias_W", "pressure_col": "S1_Pressure_mT"},
-    {"key": "S2", "label": "S2 (SOC Open)", "time_col": "S2_Time_s",
+    {"key": "S2", "label": "S2 (SOC Open)", "material": "SOC", "time_col": "S2_Time_s",
      "gas_cols": ["S2_O2_sccm", "S2_N2_sccm"], "bias_col": "S2_RF_Bias_W", "pressure_col": "S2_Pressure_mT"},
-    {"key": "S3", "label": "S3 (SiO2 HM)", "time_col": "S3_Time_s",
+    {"key": "S3", "label": "S3 (SiO2 HM)", "material": "SiO2", "time_col": "S3_Time_s",
      "gas_cols": ["S3_CF4_sccm", "S3_C4F8_sccm"], "bias_col": "S3_RF_Bias_W", "pressure_col": "S3_Pressure_mT"},
-    {"key": "S4", "label": "S4 (Si Main)", "time_col": "S4_Time_s",
+    {"key": "S4", "label": "S4 (Si Main)", "material": "Si", "time_col": "S4_Time_s",
      "gas_cols": ["S4_HBr_sccm", "S4_Cl2_sccm"], "bias_col": "S4_RF_Bias_W", "pressure_col": "S4_Pressure_mT"},
 ]
 
 ISOLATION_STAGE_DEFS = [
-    {"key": "S1", "label": "S1 (SiO2 Main Etch)", "time_col": "S1_Time_s",
+    {"key": "S1", "label": "S1 (SiO2 Main Etch)", "material": "SiO2", "time_col": "S1_Time_s",
      "gas_cols": ["S1_CHF3_sccm", "S1_C4F8_sccm", "S1_O2_sccm"], "bias_col": "S1_RF_Bias_W", "pressure_col": "S1_Pressure_mT"},
-    {"key": "S2", "label": "S2 (PolySi Etch)", "time_col": "S2_Time_s",
+    {"key": "S2", "label": "S2 (PolySi Etch)", "material": "PolySi", "time_col": "S2_Time_s",
      "gas_cols": ["S2_HBr_sccm", "S2_Cl2_sccm", "S2_O2_sccm"], "bias_col": "S2_RF_Bias_W", "pressure_col": "S2_Pressure_mT"},
 ]
 
-PROCESS_STAGE_DEFS = {"isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS}
-PROCESS_LABELS = {"isolation": "Isolation (STI) Etch", "trench": "Trench Etch"}
+GATE_STAGE_DEFS = [
+    {"key": "S1", "label": "S1 (PolySi Gate Etch, stop on Gate Oxide)", "material": "PolySi", "time_col": "Time_s",
+     "gas_cols": ["HBr_sccm", "Cl2_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
+]
+
+METAL_STAGE_DEFS = [
+    {"key": "S1", "label": "S1 (Al Metal Line Etch, stop on TiN Barrier)", "material": "Al", "time_col": "Time_s",
+     "gas_cols": ["Cl2_sccm", "BCl3_sccm"], "bias_col": "RF_Bias_W", "pressure_col": "Pressure_mT"},
+]
+
+PROCESS_STAGE_DEFS = {
+    "isolation": ISOLATION_STAGE_DEFS, "trench": TRENCH_STAGE_DEFS,
+    "gate": GATE_STAGE_DEFS, "metal": METAL_STAGE_DEFS,
+}
+PROCESS_LABELS = {
+    "isolation": "Isolation (STI) Etch", "trench": "Trench Etch",
+    "gate": "Gate PolySi Etch", "metal": "Metal (Al) Etch",
+}
 
 # 하위 호환용 기본값(과거 코드가 STAGE_DEFS를 직접 참조하던 부분 대비)
 STAGE_DEFS = TRENCH_STAGE_DEFS
@@ -72,6 +88,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DATA_FILES = {
     "isolation": os.path.join(BASE_DIR, "data", "isolation_dataset.xlsx"),
     "trench": os.path.join(BASE_DIR, "data", "trench_dataset.xlsx"),
+    "gate": os.path.join(BASE_DIR, "data", "gate_dataset.xlsx"),
+    "metal": os.path.join(BASE_DIR, "data", "metal_dataset.xlsx"),
 }
 
 
@@ -323,7 +341,11 @@ def get_recipe_stage_table(recipe_master_df: pd.DataFrame, recipe_version: str, 
 
     records = []
     for stage in stage_defs:
-        gas_str = " / ".join(f"{c.split('_')[1]} {row[c]:g}sccm" for c in stage["gas_cols"] if c in row.index)
+        def _gas_name(col: str, prefix: str = f"{stage['key']}_") -> str:
+            name = col[len(prefix):] if col.startswith(prefix) else col
+            return name[: -len("_sccm")] if name.endswith("_sccm") else name
+
+        gas_str = " / ".join(f"{_gas_name(c)} {row[c]:g}sccm" for c in stage["gas_cols"] if c in row.index)
         records.append({
             "Stage": stage["label"],
             "Time (s)": row.get(stage["time_col"], None),

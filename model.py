@@ -11,51 +11,67 @@ predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 
 
 import pandas as pd
 
-from ml_engine import isolation_core, trench_core
+from ml_engine import isolation_core, trench_core, gate_core, metal_core
 from ml_engine.scoring import compute_composite_score, _proximity_score, _uniformity_score
-from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, stage_inputs_from_recipe
+from data_utils import PARTICLE_DEFECT_THRESHOLD, PROCESS_STAGE_DEFS, PROCESS_LABELS, stage_inputs_from_recipe
 
-_CORES = {"isolation": isolation_core, "trench": trench_core}
+_CORES = {"isolation": isolation_core, "trench": trench_core, "gate": gate_core, "metal": metal_core}
 _MODEL_DIRS = {
     "isolation": "ml_engine/isolation_models",
     "trench": "ml_engine/trench_models",
+    "gate": "ml_engine/gate_models",
+    "metal": "ml_engine/metal_models",
 }
 # 각 공정 엔진이 내부적으로 Depth를 어떤 컬럼명/단위로 예측하는지 (isolation은 학습 데이터 원본이 Angstrom)
-_DEPTH_TARGET = {"isolation": "Depth_A", "trench": "Depth_nm"}
-_DEPTH_TO_NM = {"isolation": 0.1, "trench": 1.0}
+_DEPTH_TARGET = {"isolation": "Depth_A", "trench": "Depth_nm", "gate": "Depth_nm", "metal": "Depth_nm"}
+_DEPTH_TO_NM = {"isolation": 0.1, "trench": 1.0, "gate": 1.0, "metal": 1.0}
 
 
 # ==============================================================================
 # 0. 입력 dict(Stage별 UI 값) -> 모델 파라미터 dict 변환
 # ==============================================================================
-def _app_key_for_param(param_col: str) -> str:
-    """PARAMETER_COLUMNS의 실제 컬럼명(예: S1_RF_Bias_W)을 화면 입력 dict의 key(s1_rf_bias)로 변환."""
-    stage = param_col.split("_")[0].lower()
-    if param_col.endswith("_Time_s"):
-        return f"{stage}_time"
-    if param_col.endswith("_RF_Bias_W"):
-        return f"{stage}_rf_bias"
-    if param_col.endswith("_Pressure_mT"):
-        return f"{stage}_pressure"
-    return param_col.lower()  # Gas Flow 컬럼은 그대로 소문자 매칭 (예: S1_CHF3_sccm -> s1_chf3_sccm)
+def _column_app_key_map(stage_defs: list) -> dict:
+    """STAGE_DEFS(time_col/bias_col/pressure_col/gas_cols)를 기준으로 실제 모델 컬럼명 ->
+    화면 입력 dict key 매핑을 만든다. Stage 접두사(S1_ 등)가 있든 없든(1-Stage 공정) 항상 정확하다."""
+    mapping = {}
+    for stage in stage_defs:
+        key = stage["key"].lower()
+        mapping[stage["time_col"]] = f"{key}_time"
+        mapping[stage["bias_col"]] = f"{key}_rf_bias"
+        mapping[stage["pressure_col"]] = f"{key}_pressure"
+        for gas_col in stage["gas_cols"]:
+            mapping[gas_col] = gas_col.lower()
+    return mapping
 
 
-def _recipe_from_inputs(inputs: dict, param_columns: list) -> dict:
-    return {col: float(inputs.get(_app_key_for_param(col), 0.0)) for col in param_columns}
+def _app_key_for_param(param_col: str, stage_defs: list) -> str:
+    """PARAMETER_COLUMNS의 실제 컬럼명을 화면 입력 dict의 key로 변환 (stage_defs 기반)."""
+    return _column_app_key_map(stage_defs)[param_col]
 
 
-def format_parameter_label(param_col: str) -> str:
+def _recipe_from_inputs(inputs: dict, param_columns: list, stage_defs: list) -> dict:
+    key_map = _column_app_key_map(stage_defs)
+    return {col: float(inputs.get(key_map[col], 0.0)) for col in param_columns}
+
+
+def format_parameter_label(param_col: str, stage_defs: list) -> str:
     """모델 파라미터 컬럼명을 Stage·항목·단위가 보이는 UI 라벨로 바꾼다."""
-    stage = param_col.split("_")[0]
-    if param_col.endswith("_Time_s"):
-        return f"{stage} Etch Time [s]"
-    if param_col.endswith("_RF_Bias_W"):
-        return f"{stage} RF Bias [W]"
-    if param_col.endswith("_Pressure_mT"):
-        return f"{stage} Pressure [mT]"
-    if param_col.endswith("_sccm"):
-        gas = param_col.split("_")[1]
-        return f"{stage} {gas} Flow [sccm]"
+    for stage in stage_defs:
+        stage_key = stage["key"]
+        if param_col == stage["time_col"]:
+            return f"{stage_key} Etch Time [s]"
+        if param_col == stage["bias_col"]:
+            return f"{stage_key} RF Bias [W]"
+        if param_col == stage["pressure_col"]:
+            return f"{stage_key} Pressure [mT]"
+        if param_col in stage["gas_cols"]:
+            gas = param_col
+            prefix = f"{stage_key}_"
+            if gas.startswith(prefix):
+                gas = gas[len(prefix):]
+            if gas.endswith("_sccm"):
+                gas = gas[: -len("_sccm")]
+            return f"{stage_key} {gas} Flow [sccm]"
     return param_col
 
 
@@ -74,7 +90,7 @@ def predict(inputs: dict, wafer_summary_df=None, recipe_master_df=None, process:
     equipment = inputs.get("equipment")
     chamber = inputs.get("chamber")
 
-    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
+    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS, PROCESS_STAGE_DEFS[process])
 
     try:
         raw = core.predict_wafer(recipe, equipment, chamber, model_dir=model_dir, allow_out_of_range=allow_out_of_range)
@@ -307,7 +323,7 @@ def recommend_parameter_adjustments(inputs: dict, targets: dict, process: str = 
     model_dir = _MODEL_DIRS[process]
     equipment = inputs.get("equipment")
     chamber = inputs.get("chamber")
-    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS)
+    recipe = _recipe_from_inputs(inputs, core.PARAMETER_COLUMNS, PROCESS_STAGE_DEFS[process])
     try:
         return core.recommend_parameter_changes(
             recipe, equipment, chamber, targets, model_dir=model_dir, top_n=top_n,
@@ -401,13 +417,13 @@ def generate_recommendation_reason(suggestion: dict, candidate: dict, targets: d
     return " · ".join(reasons)
 
 
-def apply_recommended_changes(baseline_inputs: dict, recommendations: list) -> tuple[dict, set]:
+def apply_recommended_changes(baseline_inputs: dict, recommendations: list, stage_defs: list) -> tuple[dict, set]:
     """기준 입력값에 추천 후보들을 함께 적용해 조합 Recipe 입력값을 만든다."""
     applied = dict(baseline_inputs)
     changed = set()
     for recommendation in recommendations:
         parameter = recommendation["parameter"]
-        applied[_app_key_for_param(parameter)] = recommendation["proposed"]
+        applied[_app_key_for_param(parameter, stage_defs)] = recommendation["proposed"]
         changed.add(parameter)
     return applied, changed
 
@@ -418,14 +434,14 @@ def build_combined_recipe_table(current_inputs: dict, applied_inputs: dict, stag
     for stage in stage_defs:
         raw_columns = [stage["time_col"], stage["bias_col"], stage["pressure_col"], *stage["gas_cols"]]
         for raw_column in raw_columns:
-            app_key = _app_key_for_param(raw_column)
+            app_key = _app_key_for_param(raw_column, stage_defs)
             current_value = current_inputs.get(app_key)
             applied_value = applied_inputs.get(app_key)
             if current_value is None or applied_value is None:
                 continue
             rows.append({
                 "Stage": stage["key"],
-                "Parameter": format_parameter_label(raw_column),
+                "Parameter": format_parameter_label(raw_column, stage_defs),
                 "기준 Recipe": float(current_value),
                 "추천 적용값": float(applied_value),
             })
@@ -453,3 +469,92 @@ def build_stage_diff_table(current_inputs: dict, recommended_inputs: dict, recip
                 "변경": f"{'+' if rec - cur > 0 else ''}{rec - cur:g}{unit}",
             })
     return rows
+
+
+# ==============================================================================
+# 5. 신규 공정 품질 프리뷰 (유사도 기반, 편법) — 정식 예측이 아니라 실측 참고값 조회
+# ==============================================================================
+def find_layer_references(layer_materials: list[str]) -> dict:
+    """아직 학습된 모델이 없는 신규 공정을, 순서대로 입력한 레이어(물질) 목록으로 정의하면
+    두 가지 참고자료를 편법으로 만들어 보여준다.
+
+    1) 레이어별 참고 Recipe 조건 — 요청한 물질과 같은 Stage를 4개 기존 공정 전체에서 찾아,
+       그 Stage가 실제 관측된 파라미터 범위(Time/RF Bias/Pressure/Gas, 16개 Recipe 기준 min~max)를 보여줌.
+    2) 종합 참고 품질 — 요청한 레이어 구성과 Stage 물질 구성이 가장 많이 겹치는 기존 공정 하나를
+       골라, 그 공정의 실측 평균 최종 CD/Depth/Uniformity/Pass Rate를 보여줌.
+
+    AI로 새 공정 전체를 예측하는 게 아니다. 레이어 단위 관측 범위와, 가장 비슷한 기존 공정의
+    실측 평균만 보여주는 참고용 편법 프리뷰다 (정식 모델링은 그 공정만의 데이터·검증이 필요).
+    """
+    from data_utils import load_bundled_workbook
+
+    query_materials = [m.strip().lower() for m in layer_materials if m.strip()]
+    if not query_materials:
+        return {"layer_matches": [], "overall_reference": None}
+
+    recipe_cache: dict[str, "pd.DataFrame"] = {}
+
+    def _recipe(process: str):
+        if process not in recipe_cache:
+            recipe_cache[process] = load_bundled_workbook(process)["Recipe_Master"]
+        return recipe_cache[process]
+
+    layer_matches = []
+    for material in query_materials:
+        candidates = []
+        for process, stage_defs in PROCESS_STAGE_DEFS.items():
+            recipe_df = _recipe(process)
+            for stage in stage_defs:
+                if stage.get("material", "").strip().lower() != material:
+                    continue
+                param_ranges = {}
+                for label, col in [
+                    ("Time (s)", stage["time_col"]),
+                    ("RF Bias (W)", stage["bias_col"]),
+                    ("Pressure (mT)", stage["pressure_col"]),
+                ]:
+                    param_ranges[label] = (round(float(recipe_df[col].min()), 2), round(float(recipe_df[col].max()), 2))
+                gas_ranges = {}
+                for gas_col in stage["gas_cols"]:
+                    prefix = f"{stage['key']}_"
+                    gas_name = gas_col[len(prefix):] if gas_col.startswith(prefix) else gas_col
+                    gas_name = gas_name[: -len("_sccm")] if gas_name.endswith("_sccm") else gas_name
+                    gas_ranges[f"{gas_name} (sccm)"] = (
+                        round(float(recipe_df[gas_col].min()), 2), round(float(recipe_df[gas_col].max()), 2)
+                    )
+                candidates.append({
+                    "process": process,
+                    "process_label": PROCESS_LABELS[process],
+                    "stage_label": stage["label"],
+                    "param_ranges": param_ranges,
+                    "gas_ranges": gas_ranges,
+                })
+        layer_matches.append({"material": material, "matches": candidates})
+
+    overall_reference = None
+    best_overlap = 0
+    for process, stage_defs in PROCESS_STAGE_DEFS.items():
+        process_materials = {s.get("material", "").strip().lower() for s in stage_defs}
+        overlap = len(set(query_materials) & process_materials)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            wafer_df = load_bundled_workbook(process)["Wafer_Summary"]
+            overall_reference = {
+                "process": process,
+                "process_label": PROCESS_LABELS[process],
+                "process_materials": sorted(process_materials),
+                "overlap_count": overlap,
+                "requested_count": len(query_materials),
+                "wafer_count": int(wafer_df["Wafer_ID"].nunique()),
+                "avg_top_cd_nm": round(float(wafer_df["Top_CD_Mean_nm"].mean()), 1),
+                "avg_mid_cd_nm": round(float(wafer_df["Mid_CD_Mean_nm"].mean()), 1),
+                "avg_bottom_cd_nm": round(float(wafer_df["Bottom_CD_Mean_nm"].mean()), 1),
+                "avg_depth_nm": round(float(wafer_df["Depth_Mean_nm"].mean()), 1),
+                "avg_uniformity_pct": round(float(
+                    wafer_df[["Top_CD_Uniformity_pct", "Mid_CD_Uniformity_pct", "Bottom_CD_Uniformity_pct"]]
+                    .mean().mean()
+                ), 2),
+                "avg_pass_rate_pct": round(float(wafer_df["Overall_Spec_Pass_Rate_pct"].mean()), 1),
+            }
+
+    return {"layer_matches": layer_matches, "overall_reference": overall_reference}

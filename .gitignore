@@ -4,3 +4,5 @@ __pycache__/
 venv/
 *.xlsx
 .streamlit/secrets.toml
+ml_engine/training/*/models/
+ml_engine/training/*/results/

@@ -27,6 +27,7 @@ from model import (
     recommend_best_recipe, recommend_parameter_adjustments, build_stage_diff_table, generate_dashboard_analysis,
     format_parameter_label, generate_recommendation_reason,
     apply_recommended_changes, build_combined_recipe_table,
+    find_layer_references,
 )
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
@@ -835,7 +836,7 @@ def show_comparison(current_result: dict, current_score: dict, recommendation: d
 # ==============================================================================
 # Output E. 파라미터별 조정 제안 (AI 추천 — Recipe 단위가 아니라 파라미터 단위)
 # ==============================================================================
-def show_parameter_recommendations(suggestion: dict, targets: dict):
+def show_parameter_recommendations(suggestion: dict, targets: dict, stage_defs: list):
     st.markdown("<div class='section-title'>파라미터별 조정 제안</div>", unsafe_allow_html=True)
     st.caption(
         "입력한 조건을 출발점으로 파라미터를 하나씩 바꾸며 목표 품질에 가까워지는 방향을 찾았습니다. "
@@ -857,7 +858,7 @@ def show_parameter_recommendations(suggestion: dict, targets: dict):
     top = recommendations[0]
     st.markdown(f"**추천 조정 {len(recommendations)}건**")
     st.caption(
-        f"가장 큰 개선 후보 · {format_parameter_label(top['parameter'])} "
+        f"가장 큰 개선 후보 · {format_parameter_label(top['parameter'], stage_defs)} "
         f"{direction_kr.get(top['direction'], top['direction'])}"
     )
 
@@ -869,7 +870,7 @@ def show_parameter_recommendations(suggestion: dict, targets: dict):
             reason = "목표 품질 점수 개선"
         rows.append({
             "순위": rank,
-            "Parameter": format_parameter_label(recommendation["parameter"]),
+            "Parameter": format_parameter_label(recommendation["parameter"], stage_defs),
             "방향": direction_kr.get(recommendation["direction"], recommendation["direction"]),
             "현재값": float(recommendation["current"]),
             "제안값": float(recommendation["proposed"]),
@@ -918,7 +919,7 @@ def show_combined_recipe_section(
     target_signature = tuple(sorted((key, float(value)) for key, value in targets.items()))
 
     def build_combo(allow_out_of_range: bool = False):
-        applied_inputs, changed_parameters = apply_recommended_changes(baseline_inputs, recommendations)
+        applied_inputs, changed_parameters = apply_recommended_changes(baseline_inputs, recommendations, stage_defs)
         with st.status("추천 변경안 조합을 다시 예측하는 중...", expanded=False) as combo_status:
             combo_result = predict(
                 applied_inputs,
@@ -1449,6 +1450,77 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
     st.markdown(html, unsafe_allow_html=True)
 
 
+def show_new_process_preview():
+    """신규 공정 품질 프리뷰 (레이어 조합 기반, 편법) — 정식 AI 예측이 아니라
+    입력한 레이어(물질) 순서를 기존 4개 공정의 Stage들과 대조해 참고값을 보여준다."""
+    st.markdown("<div class='section-title'>신규 공정 품질 프리뷰</div>", unsafe_allow_html=True)
+    st.caption(
+        "아직 AI 모델이 없는 새 공정을, **Etch 하려는 레이어(물질)를 순서대로** 입력해서 미리 감을 잡는 "
+        "기능입니다. 한 줄에 레이어 하나씩 입력하세요 — 예: 하드마스크로 SiO2를 먼저 Etch하고, "
+        "그다음 PolySi를 Etch하는 공정이면 첫 줄 SiO2, 둘째 줄 PolySi. "
+        "**AI 예측이 아니며 점수화도 하지 않습니다.**"
+    )
+    st.info("사용 가능한 물질: SiO2, SiON, SOC, Si, PolySi, Al")
+
+    layer_text = st.text_area(
+        "신규 공정의 레이어를 위에서부터 순서대로, 한 줄에 하나씩 입력하세요",
+        placeholder="SiO2\nPolySi",
+        height=100,
+        key="new_process_layer_text",
+    )
+    if not layer_text.strip():
+        return
+    layer_materials = [line for line in layer_text.splitlines() if line.strip()]
+
+    result = find_layer_references(layer_materials)
+    layer_matches = result["layer_matches"]
+    overall = result["overall_reference"]
+
+    st.markdown(f"### 1) 레이어별 참고 Recipe 조건 ({len(layer_matches)}개 레이어)")
+    for i, layer in enumerate(layer_matches, start=1):
+        with st.expander(f"레이어 {i}: {layer['material']}", expanded=True):
+            if not layer["matches"]:
+                st.warning("이 물질과 겹치는 기존 Stage를 찾지 못했습니다.")
+                continue
+            for match in layer["matches"]:
+                st.markdown(f"**{match['process_label']} · {match['stage_label']}**")
+                param_cols = st.columns(len(match["param_ranges"]) + len(match["gas_ranges"]))
+                col_idx = 0
+                for label, (lo, hi) in match["param_ranges"].items():
+                    with param_cols[col_idx]:
+                        render_summary_card(label, f"{lo:g} ~ {hi:g}")
+                    col_idx += 1
+                for label, (lo, hi) in match["gas_ranges"].items():
+                    with param_cols[col_idx]:
+                        render_summary_card(label, f"{lo:g} ~ {hi:g}")
+                    col_idx += 1
+            st.caption("위 범위는 해당 Stage가 16개 Recipe에서 실제로 관측된 값의 최소~최대입니다 (예측값 아님).")
+
+    st.markdown("### 2) 종합 참고 품질")
+    if overall is None:
+        st.warning("입력한 레이어 구성과 겹치는 기존 공정을 찾지 못해 종합 참고 품질을 계산할 수 없습니다.")
+        return
+
+    st.markdown(
+        f"요청한 {overall['requested_count']}개 레이어 중 **{overall['overlap_count']}개**가 겹치는, "
+        f"가장 비슷한 기존 공정: **{overall['process_label']}** "
+        f"(이 공정의 Stage 물질 구성: {', '.join(overall['process_materials'])})"
+    )
+    ref_cols = st.columns(6)
+    ref_items = [
+        ("Top CD (nm)", overall["avg_top_cd_nm"]), ("Mid CD (nm)", overall["avg_mid_cd_nm"]),
+        ("Bottom CD (nm)", overall["avg_bottom_cd_nm"]), ("Depth (nm)", overall["avg_depth_nm"]),
+        ("Uniformity (%)", overall["avg_uniformity_pct"]), ("Pass Rate (%)", overall["avg_pass_rate_pct"]),
+    ]
+    for col, (label, value) in zip(ref_cols, ref_items):
+        with col:
+            render_summary_card(label, value)
+    st.caption(
+        f"위 수치는 {overall['process_label']} 공정 전체 Wafer {overall['wafer_count']}장의 실측 평균입니다 — "
+        "입력한 레이어 조합 전용 예측값이 아니라, 가장 비슷한 기존 공정 하나를 그대로 보여주는 참고값입니다."
+    )
+
+
 # ==============================================================================
 # 7. Parameter 변경 이력 조회 (Parameter Change History) — 과거 파라미터 변경 이력 + 당시 품질 조회
 # ==============================================================================
@@ -1859,7 +1931,9 @@ def main():
     process = st.session_state.process
     stage_defs = PROCESS_STAGE_DEFS[process]
 
-    tab1, tab2, tab3 = st.tabs(["공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter 변경 이력 조회"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter 변경 이력 조회", "신규 공정 프리뷰",
+    ])
 
     # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
     with tab1:
@@ -1926,7 +2000,7 @@ def main():
                     show_target_diagnosis(baseline_result, targets)
                     st.markdown("---")
                     suggestion = st.session_state.get("target_mode_suggestion")
-                    show_parameter_recommendations(suggestion, targets)
+                    show_parameter_recommendations(suggestion, targets, stage_defs)
                     st.markdown("---")
                     show_combined_recipe_section(
                         inputs,
@@ -2084,6 +2158,10 @@ def main():
             )
         else:
             st.info("Equipment Model과 변경 파라미터를 선택한 뒤 '이력 조회' 버튼을 눌러주세요.")
+
+    # ---- Tab 4: 신규 공정 프리뷰 (유사도 기반, 편법 — 정식 예측 아님) ----
+    with tab4:
+        show_new_process_preview()
 
     render_recent_quality_sidebar(recent_quality_slot)
 
