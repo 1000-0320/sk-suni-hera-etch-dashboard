@@ -1,8 +1,8 @@
 """공통 종합 품질 점수 공식 (Pass Rate 60% + Uniformity 25% + 목표 근접도 15%).
 
-model.py와 ml_engine/{isolation,trench}_core.py 양쪽에서 같은 공식을 써야
+model.py와 ml_engine/{isolation,trench,gate,metal}_core.py 양쪽에서 같은 공식을 써야
 "목표 품질"이 예측(Output B)뿐 아니라 파라미터 추천(Output E)에도 일관되게 반영된다.
-model.py -> ml_engine.isolation_core 방향의 기존 import와 순환되지 않도록 별도 모듈로 분리했다.
+model.py -> ml_engine.{process}_core 방향의 기존 import와 순환되지 않도록 별도 모듈로 분리했다.
 """
 
 

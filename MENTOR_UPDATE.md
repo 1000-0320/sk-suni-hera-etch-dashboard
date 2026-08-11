@@ -1,12 +1,12 @@
 # 코치님 공유용 — 대시보드 업데이트 요약
 
-배포 링크: https://etch-ai-dashboard-ya5v2zh6mugcc2g4noc5km.streamlit.app/
+배포 링크: https://etch-ai-dashboard-ds4w4tzrt6w87jszbkdqza.streamlit.app/
 
 ---
 
 ## 뭘 만들었나 (한 줄 요약)
 
-Etch 공정(**isolation**, **trench**) Recipe를 입력하면 실제 학습된 AI 모델(RandomForest/XGBoost)이
+Etch 공정(**isolation**, **trench**, **gate**, **metal**) Recipe를 입력하면 실제 학습된 AI 모델(RandomForest/XGBoost)이
 예상 품질을 예측하고, 목표 대비 점수화 → 최적 Recipe/파라미터 조정까지 추천해주는 대시보드입니다.
 
 ## 주요 기능
@@ -31,6 +31,11 @@ Etch 공정(**isolation**, **trench**) Recipe를 입력하면 실제 학습된 A
    한눈에 확인 가능
 8. **Wafer 단면 Profile 차트 (신규)** — 기존 2D 폴라 Wafer Map만으론 파악하기 어려웠던 부분을 보완:
    Point 번호를 Edge → Center → Edge 순서로 배치한 단면 그래프를 지표별로 추가 제공
+9. **3·4번째 공정 추가 (Gate PolySi Etch, Metal Al Etch)** — isolation/trench와 동일한 파이프라인으로
+   신규 학습, 공정 선택기에서 4개 공정 전부 전환 가능
+10. **Parameter 변경 이력 조회 (신규 탭)** — Rev별로 어떤 파라미터가 얼마나 바뀌었는지 이력을 표로 확인
+11. **신규 공정 품질 예측 (신규 탭)** — 아직 학습 데이터가 없는 새 Layer 조합을 Layer 순서대로 입력하면,
+    가장 비슷한 기존 공정의 실측 평균을 참고값으로 보여줌 (실제 AI 예측 아님, 참고용 근사치로 명시 표기)
 
 ## 배포 방식
 
@@ -39,5 +44,5 @@ GitHub 브랜치에 코드를 올리면 자동으로 반영됩니다.
 
 ## 코드가 궁금하시면
 
-저장소: `github.com/sunic1616-lgtm/etch-AI-dashboard` (`feature/ai-simulation-seunghyun` / `main` 브랜치)
+저장소: `github.com/sunic1616-lgtm/etch-AI-dashboard` (`main` 브랜치)
 자세한 파일 구조와 실행 방법은 저장소 [`README.md`](README.md)에 정리해뒀습니다.

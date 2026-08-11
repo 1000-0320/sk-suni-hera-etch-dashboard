@@ -20,8 +20,16 @@
 
 해주는 게 최종 목표입니다. 목표는 "평가 반복 횟수(N회 재작업)를 줄이는 것".
 
-**대상 공정 2개**: `isolation`(1차 공정, 팀에서 먼저 분석 시작), `trench`(2차 공정, 멘토님이
-"새 공정도 만들어보라"고 추가로 준 데이터로 나중에 착수).
+**대상 공정 4개**: `isolation`(1차 공정, 팀에서 먼저 분석 시작), `trench`(2차 공정, 멘토님이
+"새 공정도 만들어보라"고 추가로 준 데이터로 나중에 착수), `gate`(3차 공정, Gate PolySi Etch),
+`metal`(4차 공정, Metal Al Etch) — gate/metal은 멘토님이 이후 추가로 준 데이터로 isolation/trench와
+동일 파이프라인 재사용해서 신규 학습.
+
+> **주의**: 아래 4~9, 12번 섹션의 데이터/모델 표는 isolation·trench 기준으로 처음 작성된 내용이라
+> 그 둘만 상세 비교되어 있음. gate·metal도 구조는 동일(항목별 모델 학습·whole-recipe-holdout 검증·
+> 자동 모델 선택)하고 학습된 `.joblib`/`metadata.json`도 똑같이 존재하지만, 이 표들 자체를 gate/metal까지
+> 확장 기록하진 않았음 — 필요하면 `ml_engine/gate_models/metadata.json`, `ml_engine/metal_models/metadata.json`
+> 참고.
 
 ## 2. 팀 구성
 
@@ -59,7 +67,11 @@
    Wafer 단면 Profile 차트 추가.
 9. **버그 수정 + 기능 전수검토** — 아래 9번 항목에 정리.
 10. **최종 점검** — `main` 브랜치가 `feature/ai-simulation-seunghyun`보다 뒤처져 있던 것을 발견해
-    fast-forward로 동기화. 현재 `main`/`feature`/원격 전부 동일 커밋.
+    fast-forward로 동기화. 당시 `main`/`feature`/원격 전부 동일 커밋.
+11. **gate/metal 공정 추가 + 팀원 브랜치 통합** — 3·4번째 공정(gate/metal) 신규 학습·대시보드 연결,
+    팀원들이 각자 작업한 브랜치(로그인 화면, 이력 조회 탭, Dashboard 재구성 등)를 순서대로 병합.
+    이 과정에서 `main`이 다시 여러 커밋 뒤처졌고, 이번 문서 정리와 함께 다시 fast-forward로
+    재동기화함. 현재 `main`이 이 저장소의 최신 상태.
 
 ---
 
@@ -227,7 +239,7 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 
 | 기능 | 계기 |
 |---|---|
-| 공정 선택(isolation/trench), Recipe→예측→목표평가→추천 4단계 | 초기 통합 |
+| 공정 선택(isolation/trench/gate/metal), Recipe→예측→목표평가→추천 4단계 | 초기 통합 + gate/metal 추가 |
 | Rev 선택 시 파라미터 전체 한번에 표시 | 1차 멘토 피드백 |
 | Top/Mid/Bottom CD·Depth Wafer Map 한번에 비교 | 1차 멘토 피드백 |
 | AI 분석 섹션 Process Dashboard 탭 맨 위 배치 | 1차 멘토 피드백 |
@@ -238,6 +250,8 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 | 시뮬레이터 목표모드/Recipe입력모드 2분리 | 2차 멘토 카톡 피드백 |
 | Rev별 스코어링 순위표+차트(실측 기반) | 2차 멘토 카톡 피드백 |
 | Wafer 단면 Profile 차트(Edge→Center→Edge) | 2차 멘토 카톡 피드백 |
+| Parameter 변경 이력 조회 (신규 탭) | 팀원(정윤서님) 신규 기능 |
+| 신규 공정 품질 예측 (신규 탭) — Layer 순서 입력 → 가장 비슷한 기존 공정 실측 평균 참고값 제공 | 팀원 정의서 기반, 실제 AI 예측 아님을 화면에 명시 |
 
 ---
 
@@ -255,8 +269,8 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 
 ## 10. 배포
 
-- **URL**: https://etch-ai-dashboard-ya5v2zh6mugcc2g4noc5km.streamlit.app/ (Streamlit Community Cloud)
-- **기준 브랜치**: `feature/ai-simulation-seunghyun` (코드 push하면 자동 반영). `main`도 최신으로 동기화해둠.
+- **URL**: https://etch-ai-dashboard-ds4w4tzrt6w87jszbkdqza.streamlit.app/ (Streamlit Community Cloud)
+- **기준 브랜치**: `history-mode-yunseo` (코드 push하면 자동 반영). `main`도 이 브랜치와 동일 커밋으로 동기화되어 있음.
 - Vercel 이전은 검토했으나 상시서버+WebSocket 구조라 서버리스인 Vercel과 안 맞아 Streamlit Cloud 유지로 코치님과 확정.
 
 ---
@@ -290,5 +304,7 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 
 ## 13. 아직 안 한 것 / 다음 단계 후보
 
-- 신규 공정(isolation/trench 외) 온보딩 자동화 — 지금은 학습 스크립트·대시보드 연결 5곳을 수동 수정해야 해서, 코치님과 상의 후 팀 자체 숙제로 보류 중
+- gate/metal은 이미 수동으로 온보딩 완료(4공정 모두 운영 중). 하지만 **온보딩 자체의 자동화**(신규 공정 추가 시
+  학습 스크립트·대시보드 연결 지점을 수동으로 안 건드려도 되게 만드는 것)는 여전히 안 돼있음 — 코치님과 상의 후
+  팀 자체 숙제로 보류 중
 - CV 비교 원본 수치(`results/recipe_holdout_cv.csv`, RF/XGBoost/MLP 항목별 raw 점수표)가 로컬에도 보존 안 됨 — 최종 선택 결과만 `metadata.json`에 남아있고 중간 비교표는 재현 필요시 다시 돌려야 함

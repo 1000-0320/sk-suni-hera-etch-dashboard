@@ -2,8 +2,8 @@
 Etch AI Decision Support System - 예측/평가/추천 모델 모듈
 
 predict()는 이제 실측 이력 기반 더미가 아니라, 학습된 RandomForest/XGBoost 모델
-(ml_engine/isolation_core.py, ml_engine/trench_core.py)을 호출해 실제 예측을 수행한다.
-공정(isolation/trench)에 따라 파라미터 개수·Depth 단위가 다르므로 어댑터에서 흡수한다.
+(ml_engine/{isolation,trench,gate,metal}_core.py)을 호출해 실제 예측을 수행한다.
+공정(isolation/trench/gate/metal)에 따라 파라미터 개수·Depth 단위가 다르므로 어댑터에서 흡수한다.
 
 compute_composite_score() / evaluate_against_target() / recommend_best_recipe()는
 predict()가 반환하는 dict 형태만 유지되면 그대로 재사용된다 (모델 교체와 무관).

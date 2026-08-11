@@ -2,7 +2,7 @@
 Etch AI Decision Support System
 반도체 Etch 공정 품질 예측 및 의사결정 지원 시스템
 
-isolation / trench 두 공정을 선택할 수 있고, 학습된 RandomForest/XGBoost 모델로
+isolation / trench / gate / metal 4개 공정을 선택할 수 있고, 학습된 RandomForest/XGBoost 모델로
 실제 예측을 수행한다 (model.predict() 내부가 ml_engine의 학습된 모델을 호출).
 
 업로드 워크북은 3개 시트 구조를 전제로 한다: Recipe_Master / Wafer_Summary / Site_Level_Raw
@@ -193,11 +193,11 @@ def render_dashboard_section_title(title: str, icon: str, tone: str = "coral") -
 
 
 # ==============================================================================
-# 0. 공정 선택 (isolation / trench) — 화면 전체에 영향
+# 0. 공정 선택 (isolation / trench / gate / metal) — 화면 전체에 영향
 # ==============================================================================
 def create_process_selector():
     options = list(PROCESS_STAGE_DEFS.keys())
-    short_labels = {"isolation": "Isolation", "trench": "Trench"}
+    short_labels = {"isolation": "Isolation", "trench": "Trench", "gate": "Gate", "metal": "Metal"}
 
     st.markdown(
         """

@@ -1,7 +1,7 @@
 """
 Etch AI Decision Support System - 데이터 유틸리티 모듈
 
-실제 업로드 대상 워크북(isolation / trench)은 3개 시트로 구성된다.
+실제 업로드 대상 워크북(isolation / trench / gate / metal)은 3개 시트로 구성된다.
 
 - Recipe_Master  : Recipe_Version별 Stage(S1~S2 또는 S1~S4) 공정 조건 (Time/Gas/RF Bias/Pressure)
 - Wafer_Summary  : Wafer 1장당 1행 (Top/Mid/Bottom CD, Depth, Uniformity%, Pass Rate, Defect)
@@ -428,6 +428,8 @@ def get_default_targets(wafer_df: pd.DataFrame, recipe_df: pd.DataFrame, recipe:
 PROCESS_SPEC_TARGETS = {
     "trench": {"target_top_cd": 250.0, "target_mid_cd": 246.0, "target_bottom_cd": 236.0, "target_depth": 1200.0},
     "isolation": {"target_top_cd": 40.0, "target_mid_cd": 39.0, "target_bottom_cd": 36.0, "target_depth": 160.0},
+    "gate": {"target_top_cd": 32.0, "target_mid_cd": 31.0, "target_bottom_cd": 29.0, "target_depth": 100.0},
+    "metal": {"target_top_cd": 200.0, "target_mid_cd": 196.0, "target_bottom_cd": 188.0, "target_depth": 500.0},
 }
 
 
