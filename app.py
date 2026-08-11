@@ -1496,20 +1496,68 @@ def show_dashboard_ai_analysis(filtered_wafer: pd.DataFrame, zone_summary: pd.Da
     st.markdown(html, unsafe_allow_html=True)
 
 
+MATERIAL_CROSS_SECTION_COLORS = {
+    "Mask": "#6D4C41", "SiO2": "#64B5F6", "SiON": "#4FC3F7", "SOC": "#A1887F",
+    "Si": "#78909C", "PolySi": "#FFB74D", "Al": "#CFD8DC", "TiN": "#FFD54F",
+    "Metal": "#C0CA33", "Substrate": "#4E342E", "_default": "#B39DDB",
+}
+
+NON_ETCH_MATERIALS = {"Mask", "Substrate"}
+
+
+def _render_layer_cross_section(layer_materials, etch_indices):
+    def block(material, etched):
+        color = MATERIAL_CROSS_SECTION_COLORS.get(material, MATERIAL_CROSS_SECTION_COLORS["_default"])
+        extra = (
+            "opacity:0.45;"
+            "background-image:repeating-linear-gradient(45deg, rgba(0,0,0,0.2) 0 6px, transparent 6px 12px);"
+            if etched else ""
+        )
+        label = f"{material} (Etched)" if etched else material
+        return (
+            f"<div style='background:{color}; {extra} padding:10px; margin-bottom:2px; border-radius:4px; "
+            f"text-align:center; font-size:0.85rem; font-weight:700; color:#222;'>{label}</div>"
+        )
+
+    etch_set = set(etch_indices)
+    before_col, after_col = st.columns(2)
+    with before_col:
+        st.caption("입력 Layer 구조")
+        st.markdown("".join(block(m, False) for m in layer_materials), unsafe_allow_html=True)
+    with after_col:
+        st.caption("Etch 결과 프리뷰 (Concept)")
+        st.markdown(
+            "".join(block(m, i in etch_set) for i, m in enumerate(layer_materials)),
+            unsafe_allow_html=True,
+        )
+    st.caption("현재 이미지는 입력한 Layer 구조를 바탕으로 생성한 개념 단면도입니다. 실제 Etch 형상 예측 결과는 아닙니다.")
+
+
 def show_new_process_preview():
-    """신규 공정 품질 프리뷰 (레이어 조합 기반, 편법) — 정식 AI 예측이 아니라
-    입력한 레이어(물질) 순서를 기존 4개 공정의 Stage들과 대조해 참고값을 보여준다."""
-    st.markdown("<div class='section-title'>신규 공정 품질 프리뷰</div>", unsafe_allow_html=True)
+    """신규 공정 품질 예측 (Phase 1 스캐폴드) — 정식 AI 예측이 아니라
+    입력한 레이어(물질) 순서를 기존 4개 공정의 Stage들과 대조해 참고값을 보여주고,
+    향후 예측 기능이 붙을 자리(입력 폼·단면도·결과 카드)를 미리 구성한다."""
+    st.markdown("<div class='section-title'>신규 공정 품질 예측</div>", unsafe_allow_html=True)
     st.caption(
-        "아직 AI 모델이 없는 새 공정을, Etch 순서대로 레이어(물질)를 선택해서 미리 감을 잡는 기능입니다. "
+        "아직 AI 모델이 없는 새 공정을, Etch 순서대로 레이어(물질)를 선택하고 조건을 입력해서 미리 감을 잡는 기능입니다. "
         "**AI 예측이 아니며 점수화도 하지 않습니다.**"
     )
     st.caption("예: SiO2를 먼저 Etch하고 PolySi를 그다음 Etch한다면 → 레이어 1 SiO2, 레이어 2 PolySi")
 
+    st.markdown("#### STEP 1. 신규 공정 기본 정보")
+    st.text_input("신규 공정명", key="new_process_name", placeholder="예: New Gate Etch Test")
+    st.text_area("공정 설명", key="new_process_desc", placeholder="예: SiO2 Open 이후 PolySi를 Etch하는 신규 Gate 공정")
+    current_process = st.session_state.get("process")
+    current_equipment = st.session_state.get(f"top_equipment_{current_process}", "미선택")
+    st.caption(f"현재 선택된 Equipment: **{current_equipment}** (사이드바 EQUIPMENT 선택값을 그대로 참고합니다)")
+
+    st.markdown("#### STEP 2. Layer 구조")
     OTHER_MATERIAL_OPTION = "기타 (직접 입력)"
-    material_options = sorted({
-        stage["material"] for stage_defs in PROCESS_STAGE_DEFS.values() for stage in stage_defs
-    }) + [OTHER_MATERIAL_OPTION]
+    STANDARD_MATERIALS = ["Mask", "SiO2", "PolySi", "Si", "SiON", "SOC", "Al", "TiN", "Metal", "Substrate"]
+    material_options = sorted(
+        set(STANDARD_MATERIALS)
+        | {stage["material"] for stage_defs in PROCESS_STAGE_DEFS.values() for stage in stage_defs}
+    ) + [OTHER_MATERIAL_OPTION]
 
     if "new_process_layer_count" not in st.session_state:
         st.session_state.new_process_layer_count = 2
@@ -1549,11 +1597,31 @@ def show_new_process_preview():
         if i < layer_count - 1:
             st.markdown("<div style='text-align:center; color:#999; font-size:1.3rem;'>↓</div>", unsafe_allow_html=True)
 
+    etch_indices = [i for i, m in enumerate(layer_materials) if m not in NON_ETCH_MATERIALS]
+
+    st.markdown("#### STEP 3. Etch Recipe 입력")
+    if not etch_indices:
+        st.caption("Etch 대상 레이어가 없습니다 (Mask/Substrate만으로 구성됨).")
+    for step_no, i in enumerate(etch_indices, start=1):
+        material = layer_materials[i]
+        with st.expander(f"Step {step_no} · {material} Etch", expanded=False):
+            time_col, rf_col, pressure_col = st.columns(3)
+            with time_col:
+                st.number_input("Time (sec)", min_value=0.0, step=1.0, key=f"new_process_time_{i}")
+            with rf_col:
+                st.number_input("RF Bias (W)", min_value=0.0, step=10.0, key=f"new_process_rf_{i}")
+            with pressure_col:
+                st.number_input("Pressure (mT)", min_value=0.0, step=1.0, key=f"new_process_pressure_{i}")
+            with st.expander("상세 Recipe 조건 (Gas)", expanded=False):
+                st.text_input("Gas Type", key=f"new_process_gas_type_{i}", placeholder="예: CHF3 / C4F8 / O2")
+                st.text_input("Gas Flow", key=f"new_process_gas_flow_{i}", placeholder="예: 30 / 10 / 5 sccm")
+
     result = find_layer_references(layer_materials)
     layer_matches = result["layer_matches"]
     overall = result["overall_reference"]
 
-    st.markdown(f"### 1) 레이어별 참고 Recipe 조건 ({len(layer_matches)}개 레이어)")
+    st.markdown(f"#### STEP 4. 기존 유사 Recipe 참고 ({len(layer_matches)}개 레이어)")
+    st.markdown("###### 레이어별 참고 Recipe 조건")
     for i, (material_label, layer) in enumerate(zip(layer_materials, layer_matches), start=1):
         with st.expander(f"레이어 {i}: {material_label}", expanded=True):
             if not layer["matches"]:
@@ -1573,28 +1641,50 @@ def show_new_process_preview():
                     col_idx += 1
             st.caption("위 범위는 해당 Stage가 16개 Recipe에서 실제로 관측된 값의 최소~최대입니다 (예측값 아님).")
 
-    st.markdown("### 2) 종합 참고 품질")
+    st.markdown("###### 종합 참고 품질 (가장 비슷한 기존 공정)")
     if overall is None:
         st.warning("입력한 레이어 구성과 겹치는 기존 공정을 찾지 못해 종합 참고 품질을 계산할 수 없습니다.")
-        return
+    else:
+        st.markdown(
+            f"요청한 {overall['requested_count']}개 레이어 중 **{overall['overlap_count']}개**가 겹치는, "
+            f"가장 비슷한 기존 공정: **{overall['process_label']}** "
+            f"(이 공정의 Stage 물질 구성: {', '.join(overall['process_materials'])})"
+        )
+        ref_cols = st.columns(6)
+        ref_items = [
+            ("Top CD (nm)", overall["avg_top_cd_nm"]), ("Mid CD (nm)", overall["avg_mid_cd_nm"]),
+            ("Bottom CD (nm)", overall["avg_bottom_cd_nm"]), ("Depth (nm)", overall["avg_depth_nm"]),
+            ("Uniformity (%)", overall["avg_uniformity_pct"]), ("Pass Rate (%)", overall["avg_pass_rate_pct"]),
+        ]
+        for col, (label, value) in zip(ref_cols, ref_items):
+            with col:
+                render_summary_card(label, value)
+        st.caption(
+            f"위 수치는 {overall['process_label']} 공정 전체 Wafer {overall['wafer_count']}장의 실측 평균입니다 — "
+            "입력한 레이어 조합 전용 예측값이 아니라, 가장 비슷한 기존 공정 하나를 그대로 보여주는 참고값입니다."
+        )
 
-    st.markdown(
-        f"요청한 {overall['requested_count']}개 레이어 중 **{overall['overlap_count']}개**가 겹치는, "
-        f"가장 비슷한 기존 공정: **{overall['process_label']}** "
-        f"(이 공정의 Stage 물질 구성: {', '.join(overall['process_materials'])})"
-    )
-    ref_cols = st.columns(6)
-    ref_items = [
-        ("Top CD (nm)", overall["avg_top_cd_nm"]), ("Mid CD (nm)", overall["avg_mid_cd_nm"]),
-        ("Bottom CD (nm)", overall["avg_bottom_cd_nm"]), ("Depth (nm)", overall["avg_depth_nm"]),
-        ("Uniformity (%)", overall["avg_uniformity_pct"]), ("Pass Rate (%)", overall["avg_pass_rate_pct"]),
-    ]
-    for col, (label, value) in zip(ref_cols, ref_items):
-        with col:
-            render_summary_card(label, value)
+    st.markdown("#### STEP 5. Before / After 단면도 (Concept Preview)")
+    _render_layer_cross_section(layer_materials, etch_indices)
+
+    st.markdown("#### STEP 6. 신규 공정 품질 예측")
+    if st.button("신규 공정 품질 예측", type="primary"):
+        st.info(
+            "**To be continued**\n\n"
+            "향후 Layer·Material·Time·RF Bias·Pressure·Gas 조건과 기존 공정의 품질 데이터를 활용하여 "
+            "신규 공정의 CD·Depth·Uniformity·Pass Rate를 예측할 예정입니다."
+        )
+
+    st.markdown("#### STEP 7. 예상 품질")
+    stub_items = ["Top CD", "Mid CD", "Bottom CD", "Depth", "Uniformity", "Pass Rate"]
+    for row_start in range(0, len(stub_items), 3):
+        stub_cols = st.columns(3)
+        for col, label in zip(stub_cols, stub_items[row_start:row_start + 3]):
+            with col:
+                render_summary_card(label, "To be continued")
     st.caption(
-        f"위 수치는 {overall['process_label']} 공정 전체 Wafer {overall['wafer_count']}장의 실측 평균입니다 — "
-        "입력한 레이어 조합 전용 예측값이 아니라, 가장 비슷한 기존 공정 하나를 그대로 보여주는 참고값입니다."
+        "현재 버전에서는 신규 공정 입력 및 유사 Recipe 참고 기능까지만 제공합니다. "
+        "품질 예측 모델은 Layer 단위 데이터 축적 후 연결할 예정입니다."
     )
 
 
@@ -2014,7 +2104,7 @@ def main():
     stage_defs = PROCESS_STAGE_DEFS[process]
 
     tab1, tab2, tab3, tab4 = st.tabs([
-        "공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter 변경 이력 조회", "신규 공정 프리뷰",
+        "공정 예측 · 평가 · 추천", "Process Dashboard", "Parameter 변경 이력 조회", "신규 공정 품질 예측",
     ])
 
     # ---- Tab 1: 시뮬레이터 (모드별로 분리 — 멘토 피드백) ----
