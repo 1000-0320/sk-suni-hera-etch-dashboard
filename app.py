@@ -32,7 +32,7 @@ from model import (
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
     get_zone_summary, get_recipe_stage_table, stage_inputs_from_recipe,
-    ordered_recipe_versions, get_default_targets, get_representative_chamber,
+    ordered_recipe_versions, get_default_targets, get_dashboard_spec_targets, get_representative_chamber,
     PROCESS_STAGE_DEFS, PROCESS_LABELS,
     REQUIRED_SHEETS, PARTICLE_DEFECT_THRESHOLD,
 )
@@ -1108,7 +1108,7 @@ def filter_dashboard_by_rev(
 
 
 def show_process_summary(filtered_wafer: pd.DataFrame):
-    render_dashboard_section_title("Process Summary", "summary")
+    render_dashboard_section_title("선택 Recipe Summary", "summary")
     if filtered_wafer.empty:
         st.warning("선택한 조건에 해당하는 데이터가 없습니다.")
         return
@@ -1123,7 +1123,7 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
     particle_count = int((filtered_wafer["Total_Defect_Count"] > PARTICLE_DEFECT_THRESHOLD).sum())
 
     chambers_used = sorted(filtered_wafer["Chamber_ID"].dropna().unique())
-    row1 = st.columns(5)
+    row1 = st.columns(5, gap="medium")
     row1_items = [
         ("Equipment", filtered_wafer["Equipment_Model"].iloc[0]),
         ("Chamber (통합)", ", ".join(chambers_used) if chambers_used else "—"),
@@ -1133,9 +1133,9 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
     ]
     for col, (label, value) in zip(row1, row1_items):
         with col:
-            render_summary_card(label, value)
+            render_summary_card(label, value, variant="summary-card-recipe")
 
-    row2 = st.columns(4)
+    row2 = st.columns(4, gap="medium")
     row2_items = [
         ("평균 CD", f"{avg_cd:.1f} nm"),
         ("평균 Depth", f"{avg_depth:.1f} nm"),
@@ -1144,7 +1144,7 @@ def show_process_summary(filtered_wafer: pd.DataFrame):
     ]
     for col, (label, value) in zip(row2, row2_items):
         with col:
-            render_summary_card(label, value)
+            render_summary_card(label, value, variant="summary-card-recipe")
 
 
 # ==============================================================================
@@ -1178,7 +1178,7 @@ def _style_scoreboard_rows(display_df: pd.DataFrame, recipe_order: list, best_re
 def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict, recipe_df: pd.DataFrame, process: str):
     """Rev별 종합 품질 점수 테이블. 순위 산정과 정렬만 담당하는 표시 레이어이며,
     종합 점수 계산식(compute_composite_score)과 실측 집계 로직(score_recipe_versions)은 그대로 둔다."""
-    render_dashboard_section_title("Rev별 종합 품질 점수", "trophy", "blue")
+    render_dashboard_section_title("Recipe별 종합 품질 점수", "trophy", "blue")
     st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
 
     rev_state_key = "dashboard_selected_rev"
@@ -1233,6 +1233,13 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict,
     })
     styled = _style_scoreboard_rows(display_df, options, best_rev, selected_rev)
 
+    st.plotly_chart(build_recipe_score_chart(scoreboard, selected_rev), use_container_width=True)
+    show_dashboard_best_case(scoreboard)
+    st.markdown(
+        f"<p style='color:{COLORS['text_primary']}; font-weight:800; margin:0 0 0.5rem 0;'>"
+        "✅ 선택 — 왼쪽 체크박스를 누르면 해당 Recipe의 상세 정보를 확인할 수 있습니다.</p>",
+        unsafe_allow_html=True,
+    )
     st.dataframe(
         styled,
         hide_index=True,
@@ -1252,7 +1259,6 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict,
             "Overall Spec Pass Rate": st.column_config.NumberColumn("Overall Spec Pass Rate", format="%.1f"),
         },
     )
-    st.plotly_chart(build_recipe_score_chart(scoreboard, selected_rev), use_container_width=True)
     return scoreboard, selected_rev
 
 
@@ -1272,7 +1278,7 @@ def show_dashboard_best_case(scoreboard: pd.DataFrame) -> None:
         ]
         for col, (label, value) in zip(cols, metrics):
             with col:
-                render_summary_card(label, value)
+                render_summary_card(label, value, variant="summary-card-best")
 
 
 # ==============================================================================
@@ -1322,12 +1328,13 @@ def show_rev_quality_trends(
     equipment_chamber_wafer: pd.DataFrame,
     scoreboard: pd.DataFrame,
     recipe_df: pd.DataFrame,
+    targets: dict,
     selected_rev: str | None = None,
 ):
     """현재 Equipment/Chamber의 전체 Recipe를 Rev 순서로 집계해 비교한다."""
     render_dashboard_section_title("Rev별 품질 변화", "quality")
     st.caption(
-        "선택한 Equipment/Chamber의 실제 Wafer 결과를 Rev별로 집계했습니다. "
+        "선택한 Equipment의 실제 Wafer 결과를 Rev별로 집계했습니다. "
         "위 Recipe 필터와 관계없이 전체 Rev의 변화 방향을 비교합니다."
     )
     if equipment_chamber_wafer.empty or scoreboard is None or scoreboard.empty:
@@ -1358,9 +1365,9 @@ def show_rev_quality_trends(
 
     row1 = st.columns(2, gap="large")
     with row1[0]:
-        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
+        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard, targets, selected_rev), use_container_width=True)
     with row1[1]:
-        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
+        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard, targets, selected_rev), use_container_width=True)
 
     row2 = st.columns(2, gap="large")
     with row2[0]:
@@ -1374,8 +1381,8 @@ def show_rev_quality_trends(
 # ==============================================================================
 # 3. 품질 결과 시각화 (Wafer 단위 추이) — 각 그래프는 독립 카드
 # ==============================================================================
-def show_quality_visualization(filtered_wafer: pd.DataFrame):
-    render_dashboard_section_title("품질 결과 시각화", "quality")
+def show_quality_visualization(filtered_wafer: pd.DataFrame, targets: dict):
+    render_dashboard_section_title("Wafer 단위 품질 결과", "quality")
     if filtered_wafer.empty:
         return
 
@@ -1386,9 +1393,9 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame):
 
     row1 = st.columns(2)
     with row1[0]:
-        st.plotly_chart(build_cd_trend_chart(wafer_df), use_container_width=True)
+        st.plotly_chart(build_cd_trend_chart(wafer_df, targets), use_container_width=True)
     with row1[1]:
-        st.plotly_chart(build_depth_trend_chart(wafer_df), use_container_width=True)
+        st.plotly_chart(build_depth_trend_chart(wafer_df, targets), use_container_width=True)
 
     row2 = st.columns(2)
     with row2[0]:
@@ -1412,7 +1419,10 @@ def show_wafer_profile(filtered_site: pd.DataFrame):
         st.info("선택한 조건에 해당하는 Site 데이터가 없습니다.")
         return
 
-    st.caption("x축 = Point 번호. Edge → Center → Edge 순서로 표시하며, 선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시")
+    st.caption(
+        "x축은 Point 번호로 ExtEdge → Edge → Center → Edge → ExtEdge 순서로 표시하며, "
+        "선택 조건에 해당하는 모든 Wafer의 같은 Site 위치를 평균해 표시합니다."
+    )
     profile_items = list(WAFER_MAP_METRICS.items())
     for row_start in range(0, len(profile_items), 2):
         profile_cols = st.columns(2, gap="large")
@@ -1425,7 +1435,7 @@ def show_wafer_profile(filtered_site: pd.DataFrame):
 # 5. Zone 분석
 # ==============================================================================
 def show_zone_analysis(filtered_site: pd.DataFrame):
-    render_dashboard_section_title("Zone 분석", "zone")
+    render_dashboard_section_title("Zone별 분석", "zone")
     if filtered_site.empty:
         return None
 
@@ -2129,33 +2139,37 @@ def main():
         equipment, chambers, equipment_chamber_wafer = create_process_dashboard_equipment_selector(workbook, process)
 
         dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
+        dashboard_targets.update(get_dashboard_spec_targets(process))
         scoreboard, selected_rev = show_recipe_scoreboard(
             equipment_chamber_wafer, dashboard_targets, workbook["Recipe_Master"], process,
         )
-        show_dashboard_best_case(scoreboard)
 
         filtered_wafer, filtered_site = filter_dashboard_by_rev(
             workbook, equipment_chamber_wafer, equipment, chambers, selected_rev,
         )
 
-        with st.expander("AI 분석 자세히 보기", expanded=False):
+        with st.expander("AI 분석", expanded=False):
             zone_summary_preview = get_zone_summary(filtered_site) if not filtered_site.empty else None
             show_dashboard_ai_analysis(filtered_wafer, zone_summary_preview)
 
-        with st.expander("Recipe 비교 자세히 보기", expanded=False):
+        with st.expander("Recipe 비교", expanded=False):
             show_recipe_comparison(scoreboard, selected_rev)
 
-        with st.expander("Process Summary 자세히 보기", expanded=False):
+        with st.expander("선택 Recipe Summary", expanded=False):
             show_process_summary(filtered_wafer)
 
-        with st.expander("품질 결과 시각화 자세히 보기 (Rev별 품질 변화 · Wafer 단위 추이)", expanded=False):
-            show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"], selected_rev)
-            show_quality_visualization(filtered_wafer)
+        with st.expander("Rev별 품질 변화", expanded=False):
+            show_rev_quality_trends(
+                equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"], dashboard_targets, selected_rev,
+            )
 
-        with st.expander("Wafer Profile 자세히 보기", expanded=False):
+        with st.expander("Wafer 단위 품질 결과", expanded=False):
+            show_quality_visualization(filtered_wafer, dashboard_targets)
+
+        with st.expander("Wafer Profile", expanded=False):
             show_wafer_profile(filtered_site)
 
-        with st.expander("Zone 분석 자세히 보기", expanded=False):
+        with st.expander("Zone별 분석", expanded=False):
             show_zone_analysis(filtered_site)
 
     # ---- Tab 3: Parameter 변경 이력 조회 (Parameter Change History) ----

@@ -5,6 +5,8 @@ Etch AI Decision Support System - Plotly 차트 빌더 모듈
 단위 참고: 실제 데이터셋 기준 CD/Depth는 nm, Uniformity 계열은 변동계수(CV%, 낮을수록 좋음).
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -121,32 +123,73 @@ def build_variation_gauge(title: str, value: float, good_th: float, warn_th: flo
 
 
 # ----------------------------------------------------------------------------
-# 2. Process Dashboard - 품질 결과 시각화 (Wafer 단위 추이, Wafer_Summary 원본 사용)
+# 2. Process Dashboard - Wafer별 품질 결과 (Wafer 단위 추이, Wafer_Summary 원본 사용)
 # ----------------------------------------------------------------------------
-def build_cd_trend_chart(wafer_df):
+def _darken(hex_color: str, amount: float = 0.22) -> str:
+    """목표 점선이 같은 색 데이터 계열과 겹쳐도 구분되도록, hex 색상을 검은색 쪽으로 살짝 섞어 진하게 만든다."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    r, g, b = (round(c * (1 - amount)) for c in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _add_target_hline(fig, y, color, x=1.012, darken_amount=0.22, override_color=None):
+    """목표 스펙값을 점선 + 라벨로 표시한다 (targets 딕셔너리에 값이 없으면 아무것도 그리지 않음).
+    라벨은 그래프를 가리지 않도록 플롯 영역 바깥 오른쪽에 붙고, 배경은 흰색, 글자/테두리는 점선과 같은 색을 쓴다.
+    호출하는 차트 쪽에서 margin(r=...)을 라벨 폭만큼 넉넉히 잡아줘야 잘리지 않는다.
+    override_color를 주면 계열 색상 대신 그 색을 그대로 쓴다 (데이터와 색이 겹쳐 안 보일 때)."""
+    if y is None:
+        return
+    target_color = override_color or _darken(color, darken_amount)
+    fig.add_hline(y=y, line_dash="dash", line_color=target_color, line_width=1.5)
+    fig.add_annotation(
+        xref="paper", x=x, xanchor="left",
+        yref="y", y=y, yanchor="bottom", yshift=1,
+        text=f"Target = {y:.1f}",
+        showarrow=False,
+        font=dict(size=11, color=target_color),
+        bgcolor="#ffffff",
+        bordercolor=target_color, borderwidth=1.3, borderpad=3,
+    )
+
+
+def build_cd_trend_chart(wafer_df, targets: dict | None = None):
     fig = go.Figure()
-    cols = [("Top_CD_Mean_nm", "Top CD"), ("Mid_CD_Mean_nm", "Mid CD"), ("Bottom_CD_Mean_nm", "Bottom CD")]
-    for (col, name), color in zip(cols, [COLORS["series1"], COLORS["series2"], COLORS["series3"]]):
+    cols = [
+        ("Top_CD_Mean_nm", "Top CD", "target_top_cd"),
+        ("Mid_CD_Mean_nm", "Mid CD", "target_mid_cd"),
+        ("Bottom_CD_Mean_nm", "Bottom CD", "target_bottom_cd"),
+    ]
+    for (col, name, target_key), color in zip(
+        cols, [COLORS["series1"], COLORS["series2"], COLORS["series3"]]
+    ):
         fig.add_trace(go.Scatter(
             x=wafer_df["Wafer_Label"], y=wafer_df[col], mode="lines+markers",
             name=name, line=dict(color=color, width=2), marker=dict(size=6),
         ))
+        if targets:
+            _add_target_hline(fig, targets.get(target_key), color, darken_amount=0.10)
     fig.update_layout(
         title="Wafer별 Top / Mid / Bottom CD", yaxis_title="CD (nm)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        legend=dict(orientation="h", y=-0.48), margin=dict(t=50, b=100, l=30, r=20), height=340,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=70, b=60, l=30, r=95), height=340,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, tickangle=-45)
     return fig
 
 
-def build_depth_trend_chart(wafer_df):
+def build_depth_trend_chart(wafer_df, targets: dict | None = None):
     fig = go.Figure(go.Bar(x=wafer_df["Wafer_Label"], y=wafer_df["Depth_Mean_nm"], marker_color=COLORS["series1"]))
+    if targets:
+        _add_target_hline(
+            fig, targets.get("target_depth"), COLORS["series1"], override_color=COLORS["chart_critical"],
+        )
     fig.update_layout(
         title="Wafer별 Depth", yaxis_title="Depth (nm)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        margin=dict(t=50, b=60, l=30, r=20), height=340, showlegend=False,
+        margin=dict(t=50, b=60, l=30, r=95), height=340, showlegend=False,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, tickangle=-45)
@@ -220,13 +263,19 @@ def build_particle_chart(wafer_df):
 # ----------------------------------------------------------------------------
 # 2-1. Process Dashboard - Rev별 품질 변화 시각화
 # -----------------------------------------------------------------------------
-def build_rev_cd_trend_chart(rev_df, selected_rev: str | None = None):
+def build_rev_cd_trend_chart(rev_df, targets: dict | None = None, selected_rev: str | None = None):
     """Recipe(Rev)별 Top/Mid/Bottom CD 실측 평균을 비교한다."""
     fig = go.Figure()
     marker_sizes = [11 if r == selected_rev else 7 for r in rev_df["Recipe"]]
     marker_line_widths = [2 if r == selected_rev else 0 for r in rev_df["Recipe"]]
-    columns = [("Top CD", "Top CD"), ("Mid CD", "Mid CD"), ("Bottom CD", "Bottom CD")]
-    for (column, name), color in zip(columns, [COLORS["series1"], COLORS["series2"], COLORS["series3"]]):
+    columns = [
+        ("Top CD", "Top CD", "target_top_cd"),
+        ("Mid CD", "Mid CD", "target_mid_cd"),
+        ("Bottom CD", "Bottom CD", "target_bottom_cd"),
+    ]
+    for (column, name, target_key), color in zip(
+        columns, [COLORS["series1"], COLORS["series2"], COLORS["series3"]]
+    ):
         fig.add_trace(go.Scatter(
             x=rev_df["Recipe"], y=rev_df[column], mode="lines+markers",
             name=name, line=dict(color=color, width=2),
@@ -234,10 +283,12 @@ def build_rev_cd_trend_chart(rev_df, selected_rev: str | None = None):
             customdata=rev_df["Wafer 수"],
             hovertemplate=f"%{{x}}<br>{name}: %{{y:.1f}} nm<br>Wafer 수: %{{customdata}}장<extra></extra>",
         ))
+        if targets:
+            _add_target_hline(fig, targets.get(target_key), color)
     fig.update_layout(
         title="Rev별 Top / Mid / Bottom CD 평균", yaxis_title="CD (nm)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        legend=dict(orientation="h", y=-0.36), margin=dict(t=50, b=78, l=30, r=20), height=340,
+        legend=dict(orientation="h", y=-0.28), margin=dict(t=50, b=50, l=30, r=95), height=340,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
@@ -245,7 +296,7 @@ def build_rev_cd_trend_chart(rev_df, selected_rev: str | None = None):
     return fig
 
 
-def build_rev_depth_trend_chart(rev_df, selected_rev: str | None = None):
+def build_rev_depth_trend_chart(rev_df, targets: dict | None = None, selected_rev: str | None = None):
     """Recipe(Rev)별 Depth 실측 평균을 비교한다."""
     line_widths = [3 if r == selected_rev else 0 for r in rev_df["Recipe"]]
     fig = go.Figure(go.Bar(
@@ -254,10 +305,14 @@ def build_rev_depth_trend_chart(rev_df, selected_rev: str | None = None):
         customdata=rev_df["Wafer 수"],
         hovertemplate="%{x}<br>Depth: %{y:.1f} nm<br>Wafer 수: %{customdata}장<extra></extra>",
     ))
+    if targets:
+        _add_target_hline(
+            fig, targets.get("target_depth"), COLORS["series1"], override_color=COLORS["chart_critical"],
+        )
     fig.update_layout(
         title="Rev별 Depth 평균", yaxis_title="Depth (nm)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        margin=dict(t=50, b=50, l=30, r=20), height=340, showlegend=False, bargap=0.35,
+        margin=dict(t=50, b=50, l=30, r=95), height=340, showlegend=False, bargap=0.35,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
