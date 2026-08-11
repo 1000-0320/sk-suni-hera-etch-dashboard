@@ -134,7 +134,7 @@ def build_cd_trend_chart(wafer_df):
     fig.update_layout(
         title="Wafer별 Top / Mid / Bottom CD", yaxis_title="CD (nm)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        legend=dict(orientation="h", y=-0.32), margin=dict(t=50, b=60, l=30, r=20), height=340,
+        legend=dict(orientation="h", y=-0.48), margin=dict(t=50, b=100, l=30, r=20), height=340,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, tickangle=-45)
@@ -237,7 +237,7 @@ def build_rev_cd_trend_chart(rev_df, selected_rev: str | None = None):
     fig.update_layout(
         title="Rev별 Top / Mid / Bottom CD 평균", yaxis_title="CD (nm)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        legend=dict(orientation="h", y=-0.28), margin=dict(t=50, b=50, l=30, r=20), height=340,
+        legend=dict(orientation="h", y=-0.36), margin=dict(t=50, b=78, l=30, r=20), height=340,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)
@@ -287,7 +287,7 @@ def build_rev_uniformity_trend_chart(rev_df, selected_rev: str | None = None):
     fig.update_layout(
         title="Rev별 Uniformity 비교 (CV%, 낮을수록 좋음)", yaxis_title="Uniformity (CV%)",
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"], font=_FONT,
-        legend=dict(orientation="h", y=-0.28), margin=dict(t=50, b=50, l=30, r=20), height=340,
+        legend=dict(orientation="h", y=-0.36), margin=dict(t=50, b=78, l=30, r=20), height=340,
     )
     fig.update_yaxes(gridcolor=COLORS["gridline"])
     fig.update_xaxes(showgrid=False, type="category", tickangle=-30)

@@ -177,6 +177,11 @@ def inject_custom_css():
             grid-template-columns: repeat(4, minmax(min-content, 1fr));
             gap: 0.3rem;
         }}
+        @media (max-width: 1000px) {{
+            div[data-testid="stColumn"]:has(.process-selector-anchor) div[role="radiogroup"] {{
+                grid-template-columns: repeat(2, minmax(min-content, 1fr));
+            }}
+        }}
         div[data-testid="stColumn"]:has(.process-selector-anchor) div[role="radiogroup"] label {{
             background: {COLORS['control_bg']};
             border-radius: 10px;
@@ -480,6 +485,7 @@ def inject_custom_css():
         /* 기본 Streamlit 탭을 제품형 세그먼트 내비게이션으로 정리 */
         div[data-testid="stTabs"] [role="tablist"] {{
             gap: 0.15rem;
+            flex-wrap: wrap;
             background: {COLORS['surface']};
             border: 1px solid {COLORS['gridline']};
             border-radius: 16px;
@@ -532,6 +538,7 @@ def inject_custom_css():
         }}
         div[data-baseweb="tab-list"] {{
             gap: 0.35rem;
+            flex-wrap: wrap;
             background: {COLORS['surface']};
             border: 1px solid {COLORS['gridline']};
             border-radius: 16px;
