@@ -31,7 +31,7 @@ from model import (
 from data_utils import (
     generate_dummy_workbook, load_bundled_workbook, is_valid_workbook, load_required_sheets,
     get_zone_summary, get_recipe_stage_table, stage_inputs_from_recipe,
-    ordered_recipe_versions, get_default_targets, get_representative_chamber,
+    ordered_recipe_versions, get_default_targets, get_dashboard_spec_targets, get_representative_chamber,
     PROCESS_STAGE_DEFS, PROCESS_LABELS,
     REQUIRED_SHEETS, PARTICLE_DEFECT_THRESHOLD,
 )
@@ -1223,6 +1223,7 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict,
     })
     styled = _style_scoreboard_rows(display_df, options, best_rev, selected_rev)
 
+    st.caption("**✅ 선택 — 왼쪽 체크박스를 누르면 해당 Recipe의 상세 정보를 확인할 수 있습니다.**")
     st.dataframe(
         styled,
         hide_index=True,
@@ -1312,6 +1313,7 @@ def show_rev_quality_trends(
     equipment_chamber_wafer: pd.DataFrame,
     scoreboard: pd.DataFrame,
     recipe_df: pd.DataFrame,
+    targets: dict,
     selected_rev: str | None = None,
 ):
     """현재 Equipment/Chamber의 전체 Recipe를 Rev 순서로 집계해 비교한다."""
@@ -1348,9 +1350,9 @@ def show_rev_quality_trends(
 
     row1 = st.columns(2, gap="large")
     with row1[0]:
-        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
+        st.plotly_chart(build_rev_cd_trend_chart(rev_scoreboard, targets, selected_rev), use_container_width=True)
     with row1[1]:
-        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard, selected_rev), use_container_width=True)
+        st.plotly_chart(build_rev_depth_trend_chart(rev_scoreboard, targets, selected_rev), use_container_width=True)
 
     row2 = st.columns(2, gap="large")
     with row2[0]:
@@ -1364,8 +1366,8 @@ def show_rev_quality_trends(
 # ==============================================================================
 # 3. 품질 결과 시각화 (Wafer 단위 추이) — 각 그래프는 독립 카드
 # ==============================================================================
-def show_quality_visualization(filtered_wafer: pd.DataFrame):
-    render_dashboard_section_title("품질 결과 시각화", "quality")
+def show_quality_visualization(filtered_wafer: pd.DataFrame, targets: dict):
+    render_dashboard_section_title("Wafer별 품질 결과", "quality")
     if filtered_wafer.empty:
         return
 
@@ -1376,9 +1378,9 @@ def show_quality_visualization(filtered_wafer: pd.DataFrame):
 
     row1 = st.columns(2)
     with row1[0]:
-        st.plotly_chart(build_cd_trend_chart(wafer_df), use_container_width=True)
+        st.plotly_chart(build_cd_trend_chart(wafer_df, targets), use_container_width=True)
     with row1[1]:
-        st.plotly_chart(build_depth_trend_chart(wafer_df), use_container_width=True)
+        st.plotly_chart(build_depth_trend_chart(wafer_df, targets), use_container_width=True)
 
     row2 = st.columns(2)
     with row2[0]:
@@ -2041,6 +2043,7 @@ def main():
         equipment, chambers, equipment_chamber_wafer = create_process_dashboard_equipment_selector(workbook, process)
 
         dashboard_targets = get_default_targets(workbook["Wafer_Summary"], workbook["Recipe_Master"])
+        dashboard_targets.update(get_dashboard_spec_targets(process))
         scoreboard, selected_rev = show_recipe_scoreboard(
             equipment_chamber_wafer, dashboard_targets, workbook["Recipe_Master"], process,
         )
@@ -2061,8 +2064,10 @@ def main():
             show_process_summary(filtered_wafer)
 
         with st.expander("품질 결과 시각화 자세히 보기 (Rev별 품질 변화 · Wafer 단위 추이)", expanded=False):
-            show_rev_quality_trends(equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"], selected_rev)
-            show_quality_visualization(filtered_wafer)
+            show_rev_quality_trends(
+                equipment_chamber_wafer, scoreboard, workbook["Recipe_Master"], dashboard_targets, selected_rev,
+            )
+            show_quality_visualization(filtered_wafer, dashboard_targets)
 
         with st.expander("Wafer Profile 자세히 보기", expanded=False):
             show_wafer_profile(filtered_site)

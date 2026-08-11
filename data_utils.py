@@ -397,3 +397,16 @@ def get_default_targets(wafer_df: pd.DataFrame, recipe_df: pd.DataFrame, recipe:
         "min_pass_rate": 95.0,
         "max_defect_count": 3.0,
     }
+
+
+# 공정 스키매틱(assets/process/*.png)에 표기된 고정 설계 스펙. Process Dashboard의 목표 점선은
+# Recipe 실측 평균이 아니라 이 값을 기준으로 그린다 (Recipe/Wafer가 바뀌어도 변하지 않음).
+PROCESS_SPEC_TARGETS = {
+    "trench": {"target_top_cd": 250.0, "target_mid_cd": 246.0, "target_bottom_cd": 236.0, "target_depth": 1200.0},
+    "isolation": {"target_top_cd": 40.0, "target_mid_cd": 39.0, "target_bottom_cd": 36.0, "target_depth": 160.0},
+}
+
+
+def get_dashboard_spec_targets(process: str) -> dict:
+    """Process Dashboard 목표 점선용 고정 스펙값을 반환한다."""
+    return PROCESS_SPEC_TARGETS.get(process, {})
