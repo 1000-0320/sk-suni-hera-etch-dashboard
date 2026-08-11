@@ -1506,7 +1506,7 @@ NON_ETCH_MATERIALS = {"Mask", "Substrate"}
 
 
 def _render_layer_cross_section(layer_materials, etch_indices):
-    def block(material, etched):
+    def block(material, etched, is_last):
         color = MATERIAL_CROSS_SECTION_COLORS.get(material, MATERIAL_CROSS_SECTION_COLORS["_default"])
         extra = (
             "opacity:0.45;"
@@ -1514,22 +1514,29 @@ def _render_layer_cross_section(layer_materials, etch_indices):
             if etched else ""
         )
         label = f"{material} (Etched)" if etched else material
+        border = "" if is_last else "border-bottom:1px solid rgba(255,255,255,0.6);"
         return (
-            f"<div style='background:{color}; {extra} padding:10px; margin-bottom:2px; border-radius:4px; "
+            f"<div style='background:{color}; {extra} {border} padding:16px 10px; "
             f"text-align:center; font-size:0.85rem; font-weight:700; color:#222;'>{label}</div>"
+        )
+
+    def stack(materials, etch_set):
+        blocks = "".join(
+            block(m, i in etch_set, i == len(materials) - 1) for i, m in enumerate(materials)
+        )
+        return (
+            "<div style='border:1px solid rgba(0,0,0,0.15); border-radius:6px; overflow:hidden; "
+            f"box-shadow:0 2px 6px rgba(0,0,0,0.12);'>{blocks}</div>"
         )
 
     etch_set = set(etch_indices)
     before_col, after_col = st.columns(2)
     with before_col:
         st.caption("입력 Layer 구조")
-        st.markdown("".join(block(m, False) for m in layer_materials), unsafe_allow_html=True)
+        st.markdown(stack(layer_materials, set()), unsafe_allow_html=True)
     with after_col:
         st.caption("Etch 결과 프리뷰 (Concept)")
-        st.markdown(
-            "".join(block(m, i in etch_set) for i, m in enumerate(layer_materials)),
-            unsafe_allow_html=True,
-        )
+        st.markdown(stack(layer_materials, etch_set), unsafe_allow_html=True)
     st.caption("현재 이미지는 입력한 Layer 구조를 바탕으로 생성한 개념 단면도입니다. 실제 Etch 형상 예측 결과는 아닙니다.")
 
 
@@ -1670,22 +1677,30 @@ def show_new_process_preview():
     st.markdown("#### STEP 6. 신규 공정 품질 예측")
     if st.button("신규 공정 품질 예측", type="primary"):
         st.info(
-            "**To be continued**\n\n"
-            "향후 Layer·Material·Time·RF Bias·Pressure·Gas 조건과 기존 공정의 품질 데이터를 활용하여 "
-            "신규 공정의 CD·Depth·Uniformity·Pass Rate를 예측할 예정입니다."
+            "임의의 새 Layer 조합에 대한 진짜 품질 예측 모델은 아직 없습니다 "
+            "(Stage 단위로 분해된 품질 데이터가 없고, 기존 공정 4개만으로는 조합 다양성이 부족합니다). "
+            "대신 아래 STEP 7은 가장 비슷한 기존 공정의 실측 평균을 예시로 보여줍니다."
         )
 
     st.markdown("#### STEP 7. 예상 품질")
-    stub_items = ["Top CD", "Mid CD", "Bottom CD", "Depth", "Uniformity", "Pass Rate"]
-    for row_start in range(0, len(stub_items), 3):
-        stub_cols = st.columns(3)
-        for col, label in zip(stub_cols, stub_items[row_start:row_start + 3]):
-            with col:
-                render_summary_card(label, "To be continued")
-    st.caption(
-        "현재 버전에서는 신규 공정 입력 및 유사 Recipe 참고 기능까지만 제공합니다. "
-        "품질 예측 모델은 Layer 단위 데이터 축적 후 연결할 예정입니다."
-    )
+    if overall is None:
+        st.warning("참고할 만큼 겹치는 기존 공정을 찾지 못해 예시 품질을 보여줄 수 없습니다.")
+    else:
+        ref_items = [
+            ("Top CD (nm)", overall["avg_top_cd_nm"]), ("Mid CD (nm)", overall["avg_mid_cd_nm"]),
+            ("Bottom CD (nm)", overall["avg_bottom_cd_nm"]), ("Depth (nm)", overall["avg_depth_nm"]),
+            ("Uniformity (%)", overall["avg_uniformity_pct"]), ("Pass Rate (%)", overall["avg_pass_rate_pct"]),
+        ]
+        for row_start in range(0, len(ref_items), 3):
+            stub_cols = st.columns(3)
+            for col, (label, value) in zip(stub_cols, ref_items[row_start:row_start + 3]):
+                with col:
+                    render_summary_card(label, value)
+        st.caption(
+            f"위 수치는 실제 예측값이 아니라, 가장 비슷한 기존 공정(**{overall['process_label']}**)의 "
+            f"Wafer {overall['wafer_count']}장 실측 평균을 예시로 가져온 것입니다. "
+            "진짜 신규 공정 예측 모델은 Layer 단위 데이터 축적 후 연결할 예정입니다."
+        )
 
 
 # ==============================================================================
