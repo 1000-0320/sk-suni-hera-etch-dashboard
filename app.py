@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from html import escape
-from pathlib import Path
 from time import perf_counter
 from zoneinfo import ZoneInfo
 
@@ -64,11 +63,6 @@ from login_page import render_login_page, render_sidebar_logout
 st.set_page_config(page_title="Etch AI Decision Support System", page_icon="🧪", layout="wide")
 inject_custom_css()
 
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-PROCESS_CROSS_SECTION_IMAGES = {
-    "isolation": ASSETS_DIR / "isolation_cross_section.png",
-    "trench": ASSETS_DIR / "trench_cross_section.png",
-}
 TARGET_MODE_LABEL = "목표품질 달성을 위한 레시피 변경점 추천"
 DIRECT_MODE_LABEL = "레시피 조건을 직접 입력하여 품질 평가"
 
@@ -212,7 +206,7 @@ def create_process_selector():
         unsafe_allow_html=True,
     )
 
-    selector_col, equipment_col, image_col = st.columns([1.55, 1.55, 1.9], gap="large")
+    selector_col, equipment_col = st.columns([1, 1], gap="large")
     with selector_col:
         st.markdown('<div class="process-selector-anchor">ACTIVE PROCESS</div>', unsafe_allow_html=True)
         selected = st.radio(
@@ -248,11 +242,6 @@ def create_process_selector():
             label_visibility="collapsed",
             key=equipment_key,
         )
-
-    with image_col:
-        cross_section_path = PROCESS_CROSS_SECTION_IMAGES.get(process)
-        if cross_section_path and cross_section_path.exists():
-            st.image(str(cross_section_path), caption=f"{PROCESS_LABELS[process]} 단면 Schematic", use_container_width=True)
 
 
 # ==============================================================================
