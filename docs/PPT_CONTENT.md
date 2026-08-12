@@ -134,7 +134,7 @@ XGBoost가 선택됐고 trench·gate·metal은 데이터 특성에 따라 MLP가
 
 **대본**:
 저희 시스템은 4개 공정 전체를 하나의 흐름(예측 → 평가 → 추천 → 이력 관리)으로 통합했습니다. 배포된
-대시보드는 지금 바로 접속해서 확인하실 수 있습니다: https://etch-ai-dashboard-ds4w4tzrt6w87jszbkdqza.streamlit.app/
+대시보드는 지금 바로 접속해서 확인하실 수 있습니다: https://etch-ai-dashboard-2appgwew4wexbhrs9jqxcs.streamlit.app/?auth=1
 
 ---
 
@@ -142,5 +142,8 @@ XGBoost가 선택됐고 trench·gate·metal은 데이터 특성에 따라 MLP가
 
 - [ ] 슬라이드 개수/순서 최종 확정
 - [ ] 슬라이드 6~9에 넣을 실제 화면 스크린샷 캡처
-- [ ] 슬라이드 10 수치(R² 등) 최신 값으로 재확인 후 삽입
+- [ ] 슬라이드 10 수치(R² 등) 최신 값으로 재확인 후 삽입 — 항목별(RF/XGBoost/MLP) 원시 비교 지표표는
+      현재 레포에 보존돼 있지 않음(`.gitignore` 대상, 최종 선정 모델명만 `metadata.json`에 남음).
+      정확한 숫자가 필요하면 `validate_unseen_recipes.py` 재실행 필요, 아니면 초기 타당성 검증 수치
+      (RandomForest R² 0.94~0.95, 배포 모델 공식 벤치마크 아님)를 참고치로만 언급
 - [ ] 시연 영상 or 라이브 데모 여부 결정

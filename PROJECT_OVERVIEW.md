@@ -49,6 +49,8 @@
    산출 → 파라미터 영향 EDA → ML 가능성 시험(LORO 교차검증, RandomForest R² 0.94~0.95)까지 끝냄.
    결과 문서: `v2_분석_결과_설명.docx`, `두번째공정/trench_분석_결과_설명.docx` 등(팀 로컬/iCloud 보관,
    이 git 저장소에는 코드/모델만 올라와 있고 이 설명 문서들은 포함되어 있지 않음 — 필요하면 별도 공유 필요).
+   **주의**: 이 R² 0.94~0.95는 이 초기 타당성 검증 단계에서 나온 참고 수치이며, 실제 배포된 모델
+   (§5-3)의 공식 벤치마크가 아님 — 배포 모델 선정은 §5-2의 whole-recipe-holdout CV 기준으로 별도 진행됨.
 2. **대시보드 방향 전환** — 대시보드팀 3명이 각자 만든 버전 중 멘토님이 **손유찬님의
    `etch-AI-dashboard`**를 최종 선택. 기존에 별도로 만들던 레포는 폐기하고 이걸로 통합 작업 시작.
 3. **곽영진님의 기존 예측 엔진 발견 → 재사용** — `github.com/sunic1616-lgtm/etch_simulator`에
@@ -276,8 +278,8 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 
 ## 10. 배포
 
-- **URL**: https://etch-ai-dashboard-ds4w4tzrt6w87jszbkdqza.streamlit.app/ (Streamlit Community Cloud)
-- **기준 브랜치**: `history-mode-yunseo` (코드 push하면 자동 반영). `main`도 이 브랜치와 동일 커밋으로 동기화되어 있음.
+- **URL**: https://etch-ai-dashboard-2appgwew4wexbhrs9jqxcs.streamlit.app/?auth=1 (Streamlit Community Cloud)
+- **기준 브랜치**: `main` (코드 push하면 자동 반영).
 - Vercel 이전은 검토했으나 상시서버+WebSocket 구조라 서버리스인 Vercel과 안 맞아 Streamlit Cloud 유지로 코치님과 확정.
 
 ---
@@ -289,6 +291,13 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 - Recipe 단위 holdout으로 "안 써본 Recipe" 일반화는 검증했지만, 같은 Wafer 내 데이터 유출은 막았을 뿐 그 이상의 보장은 아님
 - Spec 상/하한은 엔지니어링 공식 기준이 아니라 관측치에서 역산한 경험적 값
 - Defect 정규화 기준값(Base/Rev15)도 공식 허용 기준이 아니라 관측된 최악/최선 사례
+- 파라미터별 조정 제안(OFAT)의 후보값은 관측된 16개 Recipe(`Base`~`Rev15`)에 실제로 있었던 값으로만
+  제한됨(`_observed_parameter_values`) — 보간·외삽 없음. 그래서 목표 품질이 지금까지 시도된 적 없는
+  값이면, 애초에 거기 도달하는 파라미터 조합 자체가 후보에 없을 수 있음
+- 목표 근접도 서브점수(`_proximity_score`)는 목표 오차가 ±5%(기본값)를 넘으면 0으로 고정됨. 종합
+  점수에서 근접도 비중은 15%뿐이라(Pass Rate 60%+Uniformity 25%), 목표가 많이 멀면 추천 순위가
+  사실상 Pass Rate·Uniformity 위주로 정해지고 목표 방향을 충분히 반영하지 못할 수 있음 — 이런 경우
+  대시보드 화면에 경고 배너로 안내됨
 
 ---
 
