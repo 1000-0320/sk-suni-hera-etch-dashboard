@@ -986,6 +986,15 @@ def show_parameter_recommendations(suggestion: dict, targets: dict, stage_defs: 
         f"출발점 점수 {suggestion['baseline_target_score_pct']:.1f}점 · "
         "각 행은 다른 조건을 유지한 One-Factor-at-a-Time 결과이며, 여러 변경안은 아래에서 함께 재검증합니다."
     )
+    max_proximity = max(
+        float(r.get("predicted_target_proximity_score_pct", 0.0)) for r in recommendations
+    )
+    if max_proximity < 1.0:
+        st.warning(
+            "목표가 현재 파라미터 조정 범위로 도달 가능한 수준을 크게 벗어나 있습니다. "
+            "위 순위는 목표 근접도가 아니라 Pass Rate·Uniformity 개선 위주로 매겨졌으며, "
+            "예상 CD도 목표에 가까워지지 않을 수 있습니다."
+        )
 
 
 def show_combined_recipe_section(
