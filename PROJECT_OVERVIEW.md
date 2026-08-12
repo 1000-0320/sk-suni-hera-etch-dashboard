@@ -323,7 +323,7 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 
 ## 10. 배포
 
-- **URL**: https://etch-ai-dashboard-2appgwew4wexbhrs9jqxcs.streamlit.app/?auth=1 (Streamlit Community Cloud)
+- **URL**: https://hera-simulator-sunic-team16.streamlit.app/ (Streamlit Community Cloud)
 - **기준 브랜치**: `main` (코드 push하면 자동 반영).
 - Vercel 이전은 검토했으나 상시서버+WebSocket 구조라 서버리스인 Vercel과 안 맞아 Streamlit Cloud 유지로 코치님과 확정.
 
