@@ -952,6 +952,12 @@ def show_parameter_recommendations(suggestion: dict, targets: dict, stage_defs: 
             "방향": direction_kr.get(recommendation["direction"], recommendation["direction"]),
             "현재값": float(recommendation["current"]),
             "제안값": float(recommendation["proposed"]),
+            "예상 CD (Top/Mid/Bottom)": (
+                f"{recommendation['predicted_top_cd']:.1f} / "
+                f"{recommendation['predicted_mid_cd']:.1f} / "
+                f"{recommendation['predicted_bottom_cd']:.1f}"
+            ),
+            "예상 Depth": float(recommendation["predicted_depth"]),
             "목표점수 개선": float(recommendation["target_composite_score_gain_pct_point"]),
             "추천 이유": reason,
         })
@@ -968,7 +974,10 @@ def show_parameter_recommendations(suggestion: dict, targets: dict, stage_defs: 
 
     styled = (
         display_df.style
-        .format({"순위": "{:d}", "현재값": "{:g}", "제안값": "{:g}", "목표점수 개선": "{:+.2f}점"})
+        .format({
+            "순위": "{:d}", "현재값": "{:g}", "제안값": "{:g}",
+            "예상 Depth": "{:.1f}", "목표점수 개선": "{:+.2f}점",
+        })
         .apply(style_recommendation_row, axis=1)
         .hide(axis="index")
     )
