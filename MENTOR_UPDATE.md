@@ -1,6 +1,6 @@
 # 코치님 공유용 — 대시보드 업데이트 요약
 
-배포 링크: https://etch-ai-dashboard-2appgwew4wexbhrs9jqxcs.streamlit.app/?auth=1
+배포 링크: https://hera-simulator-sunic-team16.streamlit.app/
 
 ---
 
