@@ -1016,6 +1016,7 @@ def show_combined_recipe_section(
 
     recommendation_count = len(recommendations)
     target_signature = tuple(sorted((key, float(value)) for key, value in targets.items()))
+    inputs_signature = tuple(sorted(baseline_inputs.items()))
 
     def build_combo(allow_out_of_range: bool = False):
         applied_inputs, changed_parameters = apply_recommended_changes(baseline_inputs, recommendations, stage_defs)
@@ -1037,6 +1038,7 @@ def show_combined_recipe_section(
             "chamber": baseline_inputs.get("chamber"),
             "base_recipe": baseline_inputs.get("recipe"),
             "target_signature": target_signature,
+            "inputs_signature": inputs_signature,
             "applied_inputs": applied_inputs,
             "changed_parameters": changed_parameters,
             "combo_result": combo_result,
@@ -1059,6 +1061,7 @@ def show_combined_recipe_section(
         and combo.get("chamber") == baseline_inputs.get("chamber")
         and combo.get("base_recipe") == baseline_inputs.get("recipe")
         and combo.get("target_signature") == target_signature
+        and combo.get("inputs_signature") == inputs_signature
     )
     if not expected_state:
         return
@@ -1279,7 +1282,7 @@ def show_recipe_scoreboard(equipment_chamber_wafer: pd.DataFrame, targets: dict,
     render_dashboard_section_title("Recipe별 종합 품질 점수", "trophy", "blue")
     st.caption("모델 예측이 아니라 실제 측정된 Wafer 결과를 Recipe(Rev)별로 집계한 종합 품질 점수입니다.")
 
-    rev_state_key = "dashboard_selected_rev"
+    rev_state_key = f"dashboard_selected_rev_{process}"
     table_key = f"pd_rev_table_{process}"
 
     if equipment_chamber_wafer.empty:
