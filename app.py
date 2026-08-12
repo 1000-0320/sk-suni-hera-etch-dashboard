@@ -735,8 +735,8 @@ def create_input_panel():
 # ==============================================================================
 # Output A. 현재 Recipe 품질 예측
 # ==============================================================================
-def show_prediction(result: dict):
-    st.markdown("<div class='section-title'>현재 Recipe 품질 예측</div>", unsafe_allow_html=True)
+def show_prediction(result: dict, title: str = "현재 Recipe 품질 예측"):
+    st.markdown(f"<div class='section-title'>{escape(title)}</div>", unsafe_allow_html=True)
 
     if result.get("_error"):
         st.error(f"예측할 수 없습니다: {result['_error']}")
@@ -772,13 +772,16 @@ def show_prediction(result: dict):
 
     chart_cols = st.columns(3)
     with chart_cols[0]:
-        st.plotly_chart(build_cd_bar_chart(result), use_container_width=True)
+        st.plotly_chart(build_cd_bar_chart(result), use_container_width=True, key=f"{title}_cd_bar")
     with chart_cols[1]:
-        st.plotly_chart(build_gauge_chart("Overall Pass Rate", result["Overall Spec Pass Rate"]), use_container_width=True)
+        st.plotly_chart(
+            build_gauge_chart("Overall Pass Rate", result["Overall Spec Pass Rate"]),
+            use_container_width=True, key=f"{title}_pass_rate_gauge",
+        )
     with chart_cols[2]:
         st.plotly_chart(
             build_variation_gauge("CD Uniformity (CV%)", result["CD Uniformity"], good_th=1.8, warn_th=3.0, max_range=6),
-            use_container_width=True,
+            use_container_width=True, key=f"{title}_cd_uniformity_gauge",
         )
 
 
@@ -1095,6 +1098,9 @@ def show_combined_recipe_section(
         .hide(axis="index")
     )
     st.dataframe(styled_table, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    show_prediction(combo_result, title="추천 변경안 적용 Recipe 품질 예측")
 
     baseline_evaluation = evaluate_against_target(baseline_result, targets)
     combo_evaluation = evaluate_against_target(combo_result, targets)
