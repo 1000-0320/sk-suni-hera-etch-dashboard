@@ -2195,6 +2195,7 @@ def main():
                         )
                         st.session_state.target_mode_baseline = baseline_result
                         st.session_state.target_mode_suggestion = suggestion
+                        st.session_state.target_mode_targets = dict(targets)
                         if baseline_result.get("_error"):
                             st.session_state.last_run_error = str(baseline_result["_error"])
                             run_status.update(label="입력값 또는 모델 상태를 확인해 주세요.", state="error", expanded=False)
@@ -2222,21 +2223,31 @@ def main():
 
             baseline_result = st.session_state.get("target_mode_baseline")
             if baseline_result is not None:
+                # run_targets: 마지막 '변경점 추천 실행' 클릭 시점의 목표값 스냅샷.
+                # 아래 진단/추천표/조합검증은 전부 이 스냅샷 기준으로 통일해서 보여준다 — 그래야
+                # 목표값을 입력창에서 바꾸기만 하고 아직 재실행하지 않은 상태에서 일부 섹션은 새 목표로,
+                # 일부는 이전 목표로 채점되는 불일치(멘토 피드백 8/12)가 생기지 않는다.
+                run_targets = st.session_state.get("target_mode_targets", targets)
+                if targets != run_targets:
+                    st.warning(
+                        "목표 품질 값이 마지막 추천 실행 이후 변경되었습니다. 아래 결과는 이전 목표값 "
+                        "기준입니다 — 새 목표로 다시 채점하려면 '변경점 추천 실행'을 다시 눌러주세요."
+                    )
                 st.markdown("---")
                 st.markdown(f"<div class='section-title'>'{recipe}' 기준 현재 예측 품질</div>", unsafe_allow_html=True)
                 show_prediction(baseline_result)
                 if not baseline_result.get("_error"):
                     st.markdown("---")
-                    show_target_diagnosis(baseline_result, targets)
+                    show_target_diagnosis(baseline_result, run_targets)
                     st.markdown("---")
                     suggestion = st.session_state.get("target_mode_suggestion")
-                    show_parameter_recommendations(suggestion, targets, stage_defs)
+                    show_parameter_recommendations(suggestion, run_targets, stage_defs)
                     st.markdown("---")
                     show_combined_recipe_section(
                         inputs,
                         baseline_result,
                         suggestion,
-                        targets,
+                        run_targets,
                         stage_defs,
                         process,
                         workbook,
