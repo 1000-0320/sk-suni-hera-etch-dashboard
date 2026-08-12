@@ -134,6 +134,22 @@
 이 선택 로직은 사람이 수동으로 고르는 게 아니라 스크립트가 CV 점수를 정렬해서 자동으로 뽑음
 (`select_deployment_models.py`, `train_quality_v2.py` 코드로 확인 가능 — 하드코딩된 편향 없음).
 
+**실제 CV 수치(대표값)**: 4개 공정 전부 로컬에 원시 결과가 있고(위 §13 참고), Top_CD 회귀 R²만
+뽑아보면 MLP가 왜 대부분 배포에서 제외되는지 바로 드러남 — MLP는 4개 공정 전부 R²가 크게 음수(=
+평균값 찍기보다 못함):
+
+| 공정 | RandomForest | XGBoost | MLP |
+|---|---|---|---|
+| isolation | 0.74 | 0.37 | −30.4 |
+| trench | 0.22 | 0.61 | −171.0 |
+| gate | −0.11 | −0.49 | −42.6 |
+| metal | 0.37 | 0.27 | −28.5 |
+
+Particle_Defect 분류(Balanced Accuracy)도 같은 패턴 — MLP는 4개 공정 전부 정확히 0.500(찍기 수준),
+RandomForest/XGBoost는 0.52~0.65. **정직한 추가 발견**: gate는 RandomForest/XGBoost조차 CD 회귀
+R²가 약하거나 음수(§11 한계 참고) — MAE(0.5~0.9nm)는 작아 보이지만 CD 값 자체의 변동폭이 작아서
+그런 것이지 예측이 특별히 정교한 건 아님.
+
 ### 5-3. 항목별 최종 선택 모델
 
 | 예측 항목 | isolation | trench | gate | metal |
@@ -320,6 +336,10 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 - Recipe 단위 holdout으로 "안 써본 Recipe" 일반화는 검증했지만, 같은 Wafer 내 데이터 유출은 막았을 뿐 그 이상의 보장은 아님
 - Spec 상/하한은 엔지니어링 공식 기준이 아니라 관측치에서 역산한 경험적 값
 - Defect 정규화 기준값(Base/Rev15)도 공식 허용 기준이 아니라 관측된 최악/최선 사례
+- gate 공정의 CD 회귀는 whole-recipe-holdout R²가 약하거나 음수(Top_CD RandomForest −0.11, Mid_CD
+  −0.05, Bottom_CD 0.20, Depth만 0.02~0.09)임 — 채택 모델도 "완전히 새로운 Recipe"에서는 평균값
+  찍기와 큰 차이가 없다는 뜻. 화면 MAE(0.5~0.9nm)가 작은 건 CD 값 자체 변동폭이 작아서지 예측이
+  정교해서가 아님. isolation/trench/metal은 R²가 대체로 양수(0.2~0.8)로 더 안정적
 - 파라미터별 조정 제안(OFAT)의 후보값은 관측된 16개 Recipe(`Base`~`Rev15`)에 실제로 있었던 값으로만
   제한됨(`_observed_parameter_values`) — 보간·외삽 없음. 그래서 목표 품질이 지금까지 시도된 적 없는
   값이면, 애초에 거기 도달하는 파라미터 조합 자체가 후보에 없을 수 있음
@@ -352,4 +372,7 @@ CD/Depth "Spec 만족 여부"는 이 Defect 점수와 별개로 `empirical_spec_
 - gate/metal은 이미 수동으로 온보딩 완료(4공정 모두 운영 중). 하지만 **온보딩 자체의 자동화**(신규 공정 추가 시
   학습 스크립트·대시보드 연결 지점을 수동으로 안 건드려도 되게 만드는 것)는 여전히 안 돼있음 — 코치님과 상의 후
   팀 자체 숙제로 보류 중
-- CV 비교 원본 수치(`results/recipe_holdout_cv.csv`, RF/XGBoost/MLP 항목별 raw 점수표)가 로컬에도 보존 안 됨 — 최종 선택 결과만 `metadata.json`에 남아있고 중간 비교표는 재현 필요시 다시 돌려야 함
+- ~~CV 비교 원본 수치가 로컬에도 보존 안 됨~~ (정정: 실제로는 4개 공정 전부 로컬에 원시 CV 결과가
+  남아있음 — `.gitignore` 대상이라 git엔 없을 뿐. `etch_simulator\results\`(isolation),
+  `trench_engine\results\`(trench), `ml_engine/training/{gate,metal}/results/`(gate/metal)의
+  `recipe_holdout_cv.csv`. 대표 수치는 §5-2에 옮겨 적어둠)
