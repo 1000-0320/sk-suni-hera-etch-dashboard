@@ -151,14 +151,29 @@
 네 공정 다 whole-recipe-holdout CV 자동 선택 결과이며 gate/metal도 사람이 고른 게 아님)
 
 **MLP 관련 참고**: MLP는 곽영진님의 원본 `etch_simulator` 레포부터 있던 3파전 비교 후보 중 하나임
-(trench에서 새로 추가한 게 아니라 그대로 복사해온 방식). isolation에서는 11개 항목 전부 RandomForest
-아니면 XGBoost가 이겨서 MLP가 하나도 배포에 안 뽑혔고, 원본 레포 README에도 "MLP는 비교·교육용으로만
-남기고 시뮬레이터엔 안 씀"이라고 적혀 있음. 반면 trench는 파라미터가 더 많고(20개, 12개 대비) 데이터
-특성이 달라서, 같은 자동 선택 로직을 돌린 결과 5개 항목(Particle_Defect, Defect_Count,
-Defect_Severity_Score, Bottom_CD_Spec_Pass, Depth_Spec_Pass)에서 실제로 MLP가 이겨서 배포에 쓰이고
-있음 — 사람이 고른 게 아니라 trench 데이터에서 나온 순수 결과. gate·metal도 항목별로 MLP가 1~2개씩
-섞여 나왔는데(gate: Bottom_CD_Spec_Pass, metal: Defect_Count/Severity/Depth_Spec_Pass) 같은
-자동 선택 로직 결과.
+(trench에서 새로 추가한 게 아니라 그대로 복사해온 방식). 이 3개(RandomForest/XGBoost/MLP)를 왜
+후보로 골랐는지 자체는 원본 레포에도, 이 문서에도 별도로 문서화된 적이 없음 — 코드에도
+`families = ["RandomForest", "XGBoost", "MLP"]`가 주석 없이 그대로 있을 뿐(`train_models.py`).
+표형 데이터+독립 Recipe 수가 적은 상황에 트리 계열이 보통 유리하고 MLP를 비교군으로 함께
+두는 건 일반적인 ML 실무 관행 정도로 이해하면 됨 — 데이터로 증명된 선택은 아님.
+
+**"왜 항목별로 MLP가 뽑히는 게 다른가"는 실제 데이터로 확인함(2026-08 재검증)**: 처음엔 "trench는
+파라미터가 더 많아서(20개, 12개 대비)"라고 설명했었는데, 이건 틀렸음 — 실제 Feature 개수(§5-4)는
+isolation 18개 / trench 26개 / gate 11개 / metal 11개로, isolation이 gate·metal보다 Feature가
+많은데도 MLP 0회고, gate·metal은 Feature 개수가 완전히 같은데 MLP가 각각 1회·3회로 다름 —
+"파라미터 개수"로는 설명이 안 됨. `data/{process}_dataset.xlsx`(Site_Level_Raw)와
+`metadata.json`(selected_models)을 4공정×11항목(총 44개) 전부 대조해서 다시 찾아본 진짜 패턴은
+**공정이 아니라 항목(target) 종류에 달려 있음**:
+- Top/Mid/Bottom CD·Depth 회귀는 4공정 16번 전부 RandomForest 아니면 XGBoost — MLP는 단 한 번도 안 뽑힘
+- MLP는 딱 두 부류에서만 뽑힘: ①`Defect_Count`/`Defect_Severity_Score`(고왜도 count형 회귀 — MLP가
+  뽑힌 행의 skew 중앙값 2.94 vs 나머지 0.90, 변동계수 중앙값 2.78 vs 0.04로 뚜렷하게 노이즈가 큼)
+  ②분류 항목 중 클래스가 비교적 균형잡힌 것(`Bottom_CD_Spec_Pass`/`Depth_Spec_Pass`/`Particle_Defect`,
+  소수클래스 비율 중앙값 0.40) — `Top_CD_Spec_Pass`/`Mid_CD_Spec_Pass`처럼 클래스가 많이 치우친
+  항목(소수클래스 비율 중앙값 0.17)은 MLP가 한 번도 안 뽑힘
+- trench·metal이 MLP를 상대적으로 많이 쓰는 건 이 "MLP가 유리한 항목 종류"가 그 공정에서 우연히
+  더 많이 MLP 쪽으로 넘어갔기 때문이지, 파라미터 개수 때문이 아님
+- **정직한 한계**: MLP가 뽑힌 건 44개 중 9개뿐이고 서로 다른 항목 종류는 5가지뿐이라, 엄밀한 통계적
+  유의성을 주장할 수 있는 표본은 아님 — 패턴은 실제로 보이지만 확정적 인과 증명은 아님
 
 ### 5-4. 모델 입력(Feature)
 
@@ -188,6 +203,7 @@ Output B(목표 대비 평가), Output C/D(최적 Recipe 추천·비교), Rev별
 - Uniformity: CD/Depth Uniformity(Site 간 변동계수%)를 사용자가 정한 허용 최대치 기준 선형 정규화(0점~100점) 후 평균
 - 목표 근접도: Top/Mid/Bottom CD·Depth 4개 항목이 목표값과 오차 0=100점, ±5%(기본값) 이상=0점으로 선형 정규화 후 평균
 - isolation·trench 둘 다 완전히 같은 공식(`ml_engine/scoring.py` 하나를 공유), 파라미터 개수만 다를 뿐 채점 방식은 동일
+- 60/25/15 가중치는 학습으로 최적화된 값이 아니라 `ml_engine/scoring.py`에 그대로 박혀 있는 설계 상수임(과대적합 방지를 위한 실험이나 가중치 튜닝은 하지 않음)
 
 ### (B) 학습 파이프라인 내부 "상대 품질 지수 v3" — Base→Rev15 기준 상대평가 (`{process}_core.py`)
 
@@ -201,6 +217,19 @@ Core = 60% × Spec Pass 확률평균 + 20% × Defect Count 점수 + 20% × Defec
 ```
 
 isolation·trench 둘 다 가중치(60/20/20, 85/15)는 동일하고, Base/Rev15 기준값(다음 섹션 표)만 공정별로 다름.
+이 가중치들도 (A)와 마찬가지로 학습된 값이 아니라 하드코딩된 설계 상수임 — `train_quality_v2.py`가
+`metadata.json`에 그대로 써넣고, `{process}_core.py`가 그 숫자를 그대로 읽어서 쓸 뿐 fit/최적화하는
+로직은 어디에도 없음.
+
+**파라미터 추천(Output E)의 실제 우선순위**: 후보 파라미터 변경안을 비교할 때 아래 6개 지표를
+순서대로 비교하는 tuple 정렬(`{process}_core.py`의 `ranking_key()`)을 씀 — 1번이 같으면 2번,
+2번도 같으면 3번... 순으로 비교:
+1. 사용자 목표 대비 종합 점수(A) 상승분
+2. 상대 품질 지수 v3(B) 상승분
+3. 최저 Zone Core 상승분
+4. 평균 Spec Pass 확률 상승분
+5. Defect Count 감소분
+6. Defect Severity 감소분
 
 **정리**: 화면에 보이는 건 (A), AI 추천이 내부적으로 방향 판단할 때 참고하는 건 (B). 둘은 가중치도
 기준점(사용자 목표 vs Base/Rev15 상대값)도 다른 별개 공식임.
