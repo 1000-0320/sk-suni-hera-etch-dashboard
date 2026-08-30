@@ -3,7 +3,7 @@
 반도체 Etch 공정(**isolation**, **trench**, **gate**, **metal**) 레시피를 입력하면, 학습된 AI 모델이
 ① 예상 웨이퍼 품질 예측 → ② 목표 스펙 대비 점수화 → ③ 파라미터 조정 추천까지 해주는 대시보드.
 
-- 배포 링크(현재 실행 중): https://hera-simulator-sunic-team16.streamlit.app/
+- 배포 링크(개인 보관용, Private): https://hera-etch-seunghyun.streamlit.app/
 - 브랜치: `main` (모든 작업 브랜치가 fast-forward로 동일 커밋에 동기화되어 있음)
 - **이 저장소에 문서가 여러 개라 헷갈리면 → [`DOCS_GUIDE.md`](DOCS_GUIDE.md)(문서 안내)부터 보세요**
 - **전체 과정(배경/데이터/모델학습/품질점수/버그이력 등) 한번에 보려면 → [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)**

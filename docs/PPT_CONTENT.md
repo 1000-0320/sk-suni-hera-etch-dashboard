@@ -134,7 +134,7 @@ XGBoost가 선택됐고 trench·gate·metal은 데이터 특성에 따라 MLP가
 
 **대본**:
 저희 시스템은 4개 공정 전체를 하나의 흐름(예측 → 평가 → 추천 → 이력 관리)으로 통합했습니다. 배포된
-대시보드는 지금 바로 접속해서 확인하실 수 있습니다: https://etch-ai-dashboard-2appgwew4wexbhrs9jqxcs.streamlit.app/?auth=1
+대시보드는 지금 바로 접속해서 확인하실 수 있습니다: https://hera-etch-seunghyun.streamlit.app/
 
 ---
 

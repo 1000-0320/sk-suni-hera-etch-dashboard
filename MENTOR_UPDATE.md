@@ -1,6 +1,6 @@
 # 코치님 공유용 — 대시보드 업데이트 요약
 
-배포 링크: https://hera-simulator-sunic-team16.streamlit.app/
+배포 링크(개인 보관용, Private): https://hera-etch-seunghyun.streamlit.app/
 
 ---
 
